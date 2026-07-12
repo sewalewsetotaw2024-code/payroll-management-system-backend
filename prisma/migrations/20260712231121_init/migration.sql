@@ -1,8 +1,35 @@
 -- CreateEnum
+CREATE TYPE "RoundingRule" AS ENUM ('ROUND_HALF_UP', 'ROUND_HALF_DOWN', 'ROUND_HALF_EVEN', 'TRUNCATE');
+
+-- CreateEnum
+CREATE TYPE "RateSource" AS ENUM ('MANUAL', 'AUTO_FETCH');
+
+-- CreateEnum
+CREATE TYPE "PayrollNotificationType" AS ENUM ('PAYROLL_SUBMITTED', 'PAYROLL_APPROVED', 'PAYROLL_REJECTED');
+
+-- CreateEnum
 CREATE TYPE "Currency" AS ENUM ('ETB', 'USD', 'GBP', 'EUR', 'AED');
 
 -- CreateEnum
 CREATE TYPE "PayrollCycle" AS ENUM ('MONTHLY', 'WEEKLY', 'DAILY', 'HOURLY');
+
+-- CreateEnum
+CREATE TYPE "DigestFrequency" AS ENUM ('DAILY', 'WEEKLY', 'MONTHLY');
+
+-- CreateEnum
+CREATE TYPE "PayDayRule" AS ENUM ('FIXED_DATE', 'OFFSET_FROM_PERIOD_END');
+
+-- CreateEnum
+CREATE TYPE "WeekendRollover" AS ENUM ('PAY_FRIDAY_BEFORE', 'PAY_MONDAY_AFTER');
+
+-- CreateEnum
+CREATE TYPE "DailyRateBasis" AS ENUM ('ANNUAL_SALARY_DIVIDED_BY_WORKING_DAYS', 'FIXED_DAILY_RATE');
+
+-- CreateEnum
+CREATE TYPE "PayslipFormat" AS ENUM ('PDF', 'HTML');
+
+-- CreateEnum
+CREATE TYPE "DeliveryTrigger" AS ENUM ('PAYSLIP_GENERATED', 'PAYSLIP_VIEWED', 'PAYSLIP_APPROVED', 'PAYSLIP_REJECTED', 'MONTHLY_DIGEST');
 
 -- CreateEnum
 CREATE TYPE "FiscalStatus" AS ENUM ('DRAFT', 'ACTIVE', 'CLOSED');
@@ -17,7 +44,10 @@ CREATE TYPE "PayrollPeriodStatus" AS ENUM ('DRAFT', 'ACTIVE', 'DONE');
 CREATE TYPE "ApprovalStatus" AS ENUM ('PENDING', 'APPROVED', 'REJECTED', 'OVERRIDDEN');
 
 -- CreateEnum
-CREATE TYPE "ApprovalStageType" AS ENUM ('PAYROLL_BATCH', 'PAYROLL_DOCUMENT', 'PAYMENT_FILE');
+CREATE TYPE "AttendanceNotificationType" AS ENUM ('ATTENDANCE_SUBMITTED', 'ATTENDANCE_APPROVED', 'ATTENDANCE_REJECTED');
+
+-- CreateEnum
+CREATE TYPE "ApprovalStageType" AS ENUM ('PAYROLL_BATCH', 'PAYROLL_DOCUMENT', 'PAYMENT_FILE', 'PAYROLL_APPROVAL', 'ATTENDANCE');
 
 -- CreateEnum
 CREATE TYPE "TaxationType" AS ENUM ('TAXABLE', 'NON_TAXABLE', 'PARTIALLY_TAXABLE');
@@ -42,6 +72,9 @@ CREATE TYPE "AttendanceSource" AS ENUM ('ZK_BIOMETRIC', 'MANUAL');
 
 -- CreateEnum
 CREATE TYPE "PensionBasis" AS ENUM ('BASIC', 'GROSS');
+
+-- CreateEnum
+CREATE TYPE "CalculationMethod" AS ENUM ('AMOUNT', 'PERCENTAGE');
 
 -- CreateEnum
 CREATE TYPE "ActingAllowanceBasis" AS ENUM ('BASIC_DIFF', 'GROSS_DIFF');
@@ -72,6 +105,9 @@ CREATE TYPE "DeductionType" AS ENUM ('EMPLOYMENT_INCOME_TAX', 'PENSION_EMPLOYEE'
 
 -- CreateEnum
 CREATE TYPE "EmployeeDeductionStatus" AS ENUM ('ACTIVE', 'PAUSED', 'COMPLETED', 'CANCELLED');
+
+-- CreateEnum
+CREATE TYPE "CalculationBasis" AS ENUM ('BASIC', 'GROSS');
 
 -- CreateEnum
 CREATE TYPE "DeductionCalculationType" AS ENUM ('FIXED_AMOUNT', 'PERCENTAGE_OF_BASIC', 'PERCENTAGE_OF_GROSS', 'REMAINING_BALANCE');
@@ -106,6 +142,9 @@ CREATE TYPE "ArchiveType" AS ENUM ('PAYROLL', 'ATTENDANCE', 'TAX', 'PENSION', 'R
 -- CreateEnum
 CREATE TYPE "AllowanceType" AS ENUM ('TRANSPORTATION', 'TELEPHONE', 'REPRESENTATION', 'HOUSING', 'MEAL', 'OTHER');
 
+-- CreateEnum
+CREATE TYPE "BatchStatus" AS ENUM ('DRAFT', 'ACTIVE', 'CLOSED', 'ARCHIVED');
+
 -- CreateTable
 CREATE TABLE "Company" (
     "id" INTEGER NOT NULL,
@@ -113,6 +152,7 @@ CREATE TABLE "Company" (
     "code" TEXT,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "syncedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "baseCurrencyId" TEXT,
 
     CONSTRAINT "Company_pkey" PRIMARY KEY ("id")
 );
@@ -352,9 +392,11 @@ CREATE TABLE "PensionRule" (
 CREATE TABLE "AllowanceConfig" (
     "id" TEXT NOT NULL,
     "companyId" INTEGER NOT NULL,
-    "earningType" "EarningType" NOT NULL,
+    "earningType" VARCHAR(100) NOT NULL,
     "label" TEXT NOT NULL,
     "isTaxable" BOOLEAN NOT NULL DEFAULT true,
+    "isExempt" BOOLEAN NOT NULL DEFAULT false,
+    "exemptPercent" DECIMAL(5,4),
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -382,7 +424,10 @@ CREATE TABLE "OvertimeRule" (
     "companyId" INTEGER NOT NULL,
     "category" "OvertimeCategory" NOT NULL,
     "rate" DECIMAL(5,2) NOT NULL,
+    "calculationBase" "PensionBasis" NOT NULL DEFAULT 'BASIC',
+    "isTaxable" BOOLEAN NOT NULL DEFAULT true,
     "weeklyCapHours" DECIMAL(5,2) NOT NULL DEFAULT 12,
+    "monthlyCapHours" DECIMAL(5,2),
     "effectiveDate" TIMESTAMP(3) NOT NULL,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -440,10 +485,13 @@ CREATE TABLE "BonusMapping" (
 CREATE TABLE "ActingAllowanceRule" (
     "id" TEXT NOT NULL,
     "companyId" INTEGER NOT NULL,
+    "calculationMethod" "CalculationMethod" NOT NULL DEFAULT 'PERCENTAGE',
+    "fixedAmount" DECIMAL(15,2),
     "minimumPeriodMonths" INTEGER NOT NULL DEFAULT 1,
     "maximumPeriodMonths" INTEGER NOT NULL DEFAULT 6,
     "basis" "ActingAllowanceBasis" NOT NULL DEFAULT 'BASIC_DIFF',
     "payablePercent" DECIMAL(5,4) NOT NULL DEFAULT 1.0000,
+    "tiers" JSONB DEFAULT '[]',
     "effectiveDate" TIMESTAMP(3) NOT NULL,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -486,12 +534,15 @@ CREATE TABLE "DeductionItem" (
     "salaryStructureId" TEXT NOT NULL,
     "deductionType" "DeductionType" NOT NULL,
     "label" TEXT NOT NULL,
-    "currency" "Currency" NOT NULL DEFAULT 'ETB',
     "isMandatory" BOOLEAN NOT NULL DEFAULT false,
     "isStatutory" BOOLEAN NOT NULL DEFAULT false,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "amount" DECIMAL(15,2),
+    "calculationType" "DeductionCalculationType",
+    "calculationBasis" "CalculationBasis",
+    "percent" DECIMAL(6,2),
 
     CONSTRAINT "DeductionItem_pkey" PRIMARY KEY ("id")
 );
@@ -505,8 +556,7 @@ CREATE TABLE "EmployeeDeduction" (
     "label" TEXT NOT NULL,
     "calculationType" "DeductionCalculationType" NOT NULL,
     "amount" DECIMAL(15,2),
-    "percent" DECIMAL(5,4),
-    "currency" "Currency" NOT NULL DEFAULT 'ETB',
+    "percent" DECIMAL(6,2),
     "status" "EmployeeDeductionStatus" NOT NULL DEFAULT 'ACTIVE',
     "startDate" TIMESTAMP(3),
     "endDate" TIMESTAMP(3),
@@ -551,15 +601,79 @@ CREATE TABLE "Configuration" (
 );
 
 -- CreateTable
+CREATE TABLE "SystemCurrency" (
+    "id" TEXT NOT NULL,
+    "companyId" INTEGER NOT NULL,
+    "code" TEXT NOT NULL,
+    "name" TEXT NOT NULL,
+    "symbol" TEXT NOT NULL,
+    "decimalPlaces" INTEGER NOT NULL DEFAULT 2,
+    "roundingRule" "RoundingRule" NOT NULL DEFAULT 'ROUND_HALF_UP',
+    "isBase" BOOLEAN NOT NULL DEFAULT false,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "autoFetchRate" BOOLEAN NOT NULL DEFAULT false,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "SystemCurrency_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "CurrencyRate" (
     "id" TEXT NOT NULL,
-    "fromCurrency" "Currency" NOT NULL,
-    "toCurrency" "Currency" NOT NULL,
+    "companyId" INTEGER NOT NULL,
+    "fromCurrencyId" TEXT NOT NULL,
+    "toCurrencyId" TEXT NOT NULL,
     "rate" DECIMAL(15,6) NOT NULL,
+    "source" "RateSource" NOT NULL DEFAULT 'MANUAL',
+    "overrideReason" TEXT,
     "effectiveDate" TIMESTAMP(3) NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "CurrencyRate_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "PayslipNotificationSettings" (
+    "id" TEXT NOT NULL,
+    "companyId" INTEGER NOT NULL,
+    "emailNotifications" BOOLEAN NOT NULL DEFAULT true,
+    "smsNotifications" BOOLEAN NOT NULL DEFAULT false,
+    "pushNotifications" BOOLEAN NOT NULL DEFAULT false,
+    "inAppNotifications" BOOLEAN NOT NULL DEFAULT false,
+    "digestFrequency" "DigestFrequency" NOT NULL DEFAULT 'WEEKLY',
+    "payslipFormat" "PayslipFormat" NOT NULL DEFAULT 'PDF',
+    "emailTemplate" TEXT,
+    "deliveryTriggers" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "PayslipNotificationSettings_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "PayFrequency" (
+    "id" TEXT NOT NULL,
+    "companyId" INTEGER NOT NULL,
+    "name" TEXT NOT NULL,
+    "frequency" "PayrollCycle" NOT NULL,
+    "periodsPerYear" INTEGER NOT NULL,
+    "isActive" BOOLEAN NOT NULL DEFAULT true,
+    "payDayRule" "PayDayRule",
+    "fixedPayDate" INTEGER,
+    "offsetDays" INTEGER,
+    "weekendRollover" "WeekendRollover",
+    "holidayRollover" "WeekendRollover",
+    "applicableEmployeeGroup" TEXT,
+    "autoGeneratePeriods" BOOLEAN NOT NULL DEFAULT true,
+    "dailyRateBasis" "DailyRateBasis",
+    "workingDaysPerYear" INTEGER,
+    "minimumPayableDays" INTEGER,
+    "overtimeEligible" BOOLEAN NOT NULL DEFAULT true,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "PayFrequency_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -598,6 +712,7 @@ CREATE TABLE "PayrollPeriod" (
 CREATE TABLE "PayrollRun" (
     "id" TEXT NOT NULL,
     "payrollPeriodId" TEXT NOT NULL,
+    "payrollBatchId" TEXT,
     "status" "PayrollStatus" NOT NULL DEFAULT 'DRAFT',
     "totalGross" DECIMAL(15,2) NOT NULL DEFAULT 0,
     "totalNet" DECIMAL(15,2) NOT NULL DEFAULT 0,
@@ -605,7 +720,9 @@ CREATE TABLE "PayrollRun" (
     "totalPension" DECIMAL(15,2) NOT NULL DEFAULT 0,
     "totalBonus" DECIMAL(15,2) NOT NULL DEFAULT 0,
     "totalOvertime" DECIMAL(15,2) NOT NULL DEFAULT 0,
+    "totalCostToCompany" DECIMAL(15,2) NOT NULL DEFAULT 0,
     "employeeCount" INTEGER NOT NULL DEFAULT 0,
+    "monthlyWorkdays" INTEGER NOT NULL DEFAULT 30,
     "processedAt" TIMESTAMP(3),
     "finalizedAt" TIMESTAMP(3),
     "createdBy" INTEGER NOT NULL,
@@ -625,6 +742,7 @@ CREATE TABLE "PayrollRunItem" (
     "proratedSalary" DECIMAL(15,2) NOT NULL,
     "grossTaxableIncome" DECIMAL(15,2) NOT NULL,
     "grossSalary" DECIMAL(15,2) NOT NULL,
+    "costToCompany" DECIMAL(15,2) NOT NULL DEFAULT 0,
     "totalDeductions" DECIMAL(15,2) NOT NULL,
     "netSalary" DECIMAL(15,2) NOT NULL,
     "currency" "Currency" NOT NULL DEFAULT 'ETB',
@@ -754,7 +872,7 @@ CREATE TABLE "PayrollProration" (
     "periodEnd" TIMESTAMP(3) NOT NULL,
     "totalDays" INTEGER NOT NULL,
     "workedDays" INTEGER NOT NULL,
-    "proratedFactor" DECIMAL(5,4) NOT NULL,
+    "proratedFactor" DECIMAL(10,6) NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -783,11 +901,32 @@ CREATE TABLE "AttendanceImport" (
     "importedBy" TEXT NOT NULL,
     "importedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "status" "ApprovalStatus" NOT NULL DEFAULT 'PENDING',
+    "isActive" BOOLEAN NOT NULL DEFAULT false,
+    "processedAt" TIMESTAMP(3),
     "fileReference" TEXT,
     "recordCount" INTEGER NOT NULL DEFAULT 0,
     "errorDetails" TEXT,
+    "periodLabel" TEXT,
+    "totalEmployees" INTEGER NOT NULL DEFAULT 0,
+    "totalRecords" INTEGER NOT NULL DEFAULT 0,
+    "exportData" TEXT,
 
     CONSTRAINT "AttendanceImport_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "AttendanceNotification" (
+    "id" TEXT NOT NULL,
+    "recipientId" INTEGER NOT NULL,
+    "type" "AttendanceNotificationType" NOT NULL,
+    "title" TEXT NOT NULL,
+    "message" TEXT,
+    "attendanceImportId" TEXT,
+    "rejectionNote" TEXT,
+    "read" BOOLEAN NOT NULL DEFAULT false,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "AttendanceNotification_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -810,15 +949,64 @@ CREATE TABLE "AttendanceRecord" (
 -- CreateTable
 CREATE TABLE "OvertimeRecord" (
     "id" TEXT NOT NULL,
-    "attendanceRecordId" TEXT NOT NULL,
+    "attendanceRecordId" TEXT,
     "category" "OvertimeCategory" NOT NULL,
     "hours" DECIMAL(5,2) NOT NULL,
     "isManualEntry" BOOLEAN NOT NULL DEFAULT false,
     "approvedBy" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
+    "attendanceMonthlySummaryId" TEXT,
 
     CONSTRAINT "OvertimeRecord_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "AttendanceMonthlySummary" (
+    "id" TEXT NOT NULL,
+    "attendanceImportId" TEXT NOT NULL,
+    "employeeId" TEXT NOT NULL,
+    "employeeName" TEXT NOT NULL DEFAULT '',
+    "department" TEXT NOT NULL DEFAULT '',
+    "regularHours" DECIMAL(7,2) NOT NULL,
+    "lateMinutes" INTEGER NOT NULL DEFAULT 0,
+    "earlyOutMinutes" INTEGER NOT NULL DEFAULT 0,
+    "absenceHours" DECIMAL(7,2) NOT NULL,
+    "normalOtHours" DECIMAL(7,2) NOT NULL,
+    "weekendOtHours" DECIMAL(7,2) NOT NULL,
+    "holidayOtHours" DECIMAL(7,2) NOT NULL,
+    "ot1Hours" DECIMAL(7,2) NOT NULL,
+    "annualLeaveHours" DECIMAL(7,2) NOT NULL,
+    "sickLeaveHours" DECIMAL(7,2) NOT NULL,
+    "casualLeaveHours" DECIMAL(7,2) NOT NULL,
+    "maternityLeaveHours" DECIMAL(7,2) NOT NULL,
+    "compassionateLeaveHours" DECIMAL(7,2) NOT NULL,
+    "businessTripHours" DECIMAL(7,2) NOT NULL,
+    "compensatoryHours" DECIMAL(7,2) NOT NULL,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "AttendanceMonthlySummary_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "AttendancePeriodSummary" (
+    "id" TEXT NOT NULL,
+    "attendanceImportId" TEXT NOT NULL,
+    "employeeId" TEXT NOT NULL,
+    "regularHours" DECIMAL(7,2) NOT NULL,
+    "paidLeaveHours" DECIMAL(7,2) NOT NULL,
+    "absenceHours" DECIMAL(7,2),
+    "monthlyWorkHours" DECIMAL(7,2) NOT NULL,
+    "totalHours" DECIMAL(7,2) NOT NULL,
+    "workingDays" INTEGER,
+    "absentDays" INTEGER,
+    "paidLeaveDays" DECIMAL(7,2),
+    "actualDays" DECIMAL(7,2),
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "AttendancePeriodSummary_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateTable
@@ -829,6 +1017,9 @@ CREATE TABLE "ActingAssignment" (
     "actingPositionId" TEXT NOT NULL,
     "actingAllowanceRuleId" TEXT,
     "actingPositionSalary" DECIMAL(15,2) NOT NULL,
+    "actingPositionBasicSalary" DECIMAL(15,2),
+    "actingPositionGrossSalary" DECIMAL(15,2),
+    "replacedEmployeeId" TEXT,
     "startDate" TIMESTAMP(3) NOT NULL,
     "endDate" TIMESTAMP(3),
     "expectedEndDate" TIMESTAMP(3),
@@ -886,6 +1077,59 @@ CREATE TABLE "LeaveDeduction" (
 );
 
 -- CreateTable
+CREATE TABLE "LeaveBalance" (
+    "id" TEXT NOT NULL,
+    "employeeId" TEXT NOT NULL,
+    "companyId" INTEGER NOT NULL,
+    "leaveType" TEXT NOT NULL,
+    "fiscalYear" INTEGER NOT NULL,
+    "totalEntitlement" DECIMAL(5,2) NOT NULL,
+    "usedDays" DECIMAL(5,2) NOT NULL,
+    "pendingDays" DECIMAL(5,2) NOT NULL,
+    "remainingDays" DECIMAL(5,2) NOT NULL,
+    "expiryDate" TIMESTAMP(3),
+    "externalId" TEXT,
+    "syncedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "LeaveBalance_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "LeaveApplication" (
+    "id" TEXT NOT NULL,
+    "employeeId" TEXT NOT NULL,
+    "companyId" INTEGER NOT NULL,
+    "leaveType" TEXT NOT NULL,
+    "startDate" TIMESTAMP(3) NOT NULL,
+    "endDate" TIMESTAMP(3) NOT NULL,
+    "requestedDays" DECIMAL(5,2) NOT NULL,
+    "status" TEXT NOT NULL DEFAULT 'APPROVED',
+    "externalId" TEXT,
+    "syncedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
+
+    CONSTRAINT "LeaveApplication_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "PayrollLeaveItem" (
+    "id" TEXT NOT NULL,
+    "payrollRunItemId" TEXT NOT NULL,
+    "employeeId" TEXT NOT NULL,
+    "companyId" INTEGER NOT NULL,
+    "payrollPeriodId" TEXT,
+    "leaveType" TEXT NOT NULL,
+    "leaveCode" TEXT,
+    "leaveDaysInPeriod" DECIMAL(7,2) NOT NULL,
+    "isPaid" BOOLEAN NOT NULL DEFAULT false,
+    "deductionAmount" DECIMAL(15,2) NOT NULL,
+    "syncedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "PayrollLeaveItem_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "ApprovalWorkflow" (
     "id" TEXT NOT NULL,
     "companyId" INTEGER NOT NULL,
@@ -905,6 +1149,7 @@ CREATE TABLE "ApprovalStep" (
     "stageType" "ApprovalStageType" NOT NULL,
     "stepOrder" INTEGER NOT NULL,
     "requiredRoleId" INTEGER NOT NULL,
+    "alternateRoleId" INTEGER,
     "isRequired" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -942,6 +1187,20 @@ CREATE TABLE "ApprovalAction" (
 );
 
 -- CreateTable
+CREATE TABLE "PayrollNotification" (
+    "id" TEXT NOT NULL,
+    "recipientId" INTEGER NOT NULL,
+    "type" "PayrollNotificationType" NOT NULL,
+    "title" TEXT NOT NULL,
+    "message" TEXT,
+    "payrollRunId" TEXT,
+    "read" BOOLEAN NOT NULL DEFAULT false,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "PayrollNotification_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
 CREATE TABLE "ManualAdjustment" (
     "id" TEXT NOT NULL,
     "payrollRunId" TEXT,
@@ -949,6 +1208,7 @@ CREATE TABLE "ManualAdjustment" (
     "companyId" INTEGER NOT NULL,
     "adjustmentType" "AdjustmentType" NOT NULL,
     "amount" DECIMAL(15,2) NOT NULL,
+    "isTaxable" BOOLEAN NOT NULL DEFAULT true,
     "reason" TEXT NOT NULL,
     "approvedBy" TEXT,
     "approvedAt" TIMESTAMP(3),
@@ -1109,21 +1369,6 @@ CREATE TABLE "WebhookEvent" (
 );
 
 -- CreateTable
-CREATE TABLE "BiometricImportJob" (
-    "id" TEXT NOT NULL,
-    "filePath" TEXT,
-    "source" TEXT NOT NULL DEFAULT 'ZK_BIOMETRIC',
-    "recordCount" INTEGER NOT NULL DEFAULT 0,
-    "status" "SyncStatus" NOT NULL,
-    "errorDetails" TEXT,
-    "startedAt" TIMESTAMP(3) NOT NULL,
-    "completedAt" TIMESTAMP(3),
-    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "BiometricImportJob_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
 CREATE TABLE "ErcaSubmission" (
     "id" TEXT NOT NULL,
     "payrollPeriodId" TEXT,
@@ -1277,18 +1522,29 @@ CREATE TABLE "ImportFolder" (
 );
 
 -- CreateTable
-CREATE TABLE "PayrollNetPay" (
+CREATE TABLE "PayrollBatch" (
     "id" TEXT NOT NULL,
-    "payrollRunItemId" TEXT NOT NULL,
-    "grossSalary" DECIMAL(15,2) NOT NULL,
-    "totalEarnings" DECIMAL(15,2) NOT NULL,
-    "totalDeductions" DECIMAL(15,2) NOT NULL,
-    "netSalary" DECIMAL(15,2) NOT NULL,
-    "currency" "Currency" NOT NULL,
+    "name" TEXT NOT NULL,
+    "payrollPeriodId" TEXT NOT NULL,
+    "status" "BatchStatus" NOT NULL DEFAULT 'DRAFT',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "PayrollNetPay_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "PayrollBatch_pkey" PRIMARY KEY ("id")
 );
+
+-- CreateTable
+CREATE TABLE "PayrollBatchEmployee" (
+    "id" TEXT NOT NULL,
+    "employeeId" TEXT NOT NULL,
+    "payrollBatchId" TEXT NOT NULL,
+    "payrollPeriodId" TEXT NOT NULL,
+
+    CONSTRAINT "PayrollBatchEmployee_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Company_baseCurrencyId_key" ON "Company"("baseCurrencyId");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "Employee_externalId_key" ON "Employee"("externalId");
@@ -1354,7 +1610,22 @@ CREATE UNIQUE INDEX "DeductionPaymentPlan_employeeDeductionId_key" ON "Deduction
 CREATE UNIQUE INDEX "Configuration_companyId_key_key" ON "Configuration"("companyId", "key");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "CurrencyRate_fromCurrency_toCurrency_effectiveDate_key" ON "CurrencyRate"("fromCurrency", "toCurrency", "effectiveDate");
+CREATE INDEX "SystemCurrency_companyId_isActive_idx" ON "SystemCurrency"("companyId", "isActive");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "SystemCurrency_companyId_code_key" ON "SystemCurrency"("companyId", "code");
+
+-- CreateIndex
+CREATE INDEX "CurrencyRate_companyId_effectiveDate_idx" ON "CurrencyRate"("companyId", "effectiveDate");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "CurrencyRate_companyId_fromCurrencyId_toCurrencyId_effectiv_key" ON "CurrencyRate"("companyId", "fromCurrencyId", "toCurrencyId", "effectiveDate");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "PayslipNotificationSettings_companyId_key" ON "PayslipNotificationSettings"("companyId");
+
+-- CreateIndex
+CREATE INDEX "PayFrequency_companyId_isActive_idx" ON "PayFrequency"("companyId", "isActive");
 
 -- CreateIndex
 CREATE INDEX "FiscalYear_companyId_isActive_idx" ON "FiscalYear"("companyId", "isActive");
@@ -1364,6 +1635,9 @@ CREATE INDEX "PayrollPeriod_companyId_status_idx" ON "PayrollPeriod"("companyId"
 
 -- CreateIndex
 CREATE UNIQUE INDEX "PayrollPeriod_companyId_startDate_endDate_cycle_key" ON "PayrollPeriod"("companyId", "startDate", "endDate", "cycle");
+
+-- CreateIndex
+CREATE INDEX "PayrollRun_payrollBatchId_idx" ON "PayrollRun"("payrollBatchId");
 
 -- CreateIndex
 CREATE INDEX "PayrollRunItem_payrollRunId_idx" ON "PayrollRunItem"("payrollRunId");
@@ -1399,10 +1673,25 @@ CREATE INDEX "PayrollAllowance_payrollRunItemId_idx" ON "PayrollAllowance"("payr
 CREATE UNIQUE INDEX "PayrollProration_payrollRunItemId_key" ON "PayrollProration"("payrollRunItemId");
 
 -- CreateIndex
+CREATE INDEX "AttendanceNotification_recipientId_read_idx" ON "AttendanceNotification"("recipientId", "read");
+
+-- CreateIndex
 CREATE INDEX "AttendanceRecord_employeeId_date_idx" ON "AttendanceRecord"("employeeId", "date");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "AttendanceRecord_attendanceImportId_employeeId_date_key" ON "AttendanceRecord"("attendanceImportId", "employeeId", "date");
+
+-- CreateIndex
+CREATE INDEX "AttendanceMonthlySummary_employeeId_idx" ON "AttendanceMonthlySummary"("employeeId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "AttendanceMonthlySummary_attendanceImportId_employeeId_key" ON "AttendanceMonthlySummary"("attendanceImportId", "employeeId");
+
+-- CreateIndex
+CREATE INDEX "AttendancePeriodSummary_employeeId_idx" ON "AttendancePeriodSummary"("employeeId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "AttendancePeriodSummary_attendanceImportId_employeeId_key" ON "AttendancePeriodSummary"("attendanceImportId", "employeeId");
 
 -- CreateIndex
 CREATE INDEX "ActingAssignment_employeeId_status_idx" ON "ActingAssignment"("employeeId", "status");
@@ -1411,7 +1700,40 @@ CREATE INDEX "ActingAssignment_employeeId_status_idx" ON "ActingAssignment"("emp
 CREATE UNIQUE INDEX "Payslip_payrollRunItemId_key" ON "Payslip"("payrollRunItemId");
 
 -- CreateIndex
-CREATE INDEX "LeaveDeduction_employeeId_payrollPeriodId_idx" ON "LeaveDeduction"("employeeId", "payrollPeriodId");
+CREATE UNIQUE INDEX "LeaveDeduction_employeeId_payrollPeriodId_leaveType_key" ON "LeaveDeduction"("employeeId", "payrollPeriodId", "leaveType");
+
+-- CreateIndex
+CREATE INDEX "LeaveBalance_employeeId_fiscalYear_idx" ON "LeaveBalance"("employeeId", "fiscalYear");
+
+-- CreateIndex
+CREATE INDEX "LeaveBalance_companyId_fiscalYear_idx" ON "LeaveBalance"("companyId", "fiscalYear");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "LeaveBalance_employeeId_leaveType_fiscalYear_key" ON "LeaveBalance"("employeeId", "leaveType", "fiscalYear");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "LeaveApplication_externalId_key" ON "LeaveApplication"("externalId");
+
+-- CreateIndex
+CREATE INDEX "LeaveApplication_employeeId_idx" ON "LeaveApplication"("employeeId");
+
+-- CreateIndex
+CREATE INDEX "LeaveApplication_companyId_status_idx" ON "LeaveApplication"("companyId", "status");
+
+-- CreateIndex
+CREATE INDEX "LeaveApplication_employeeId_startDate_endDate_idx" ON "LeaveApplication"("employeeId", "startDate", "endDate");
+
+-- CreateIndex
+CREATE INDEX "PayrollLeaveItem_employeeId_idx" ON "PayrollLeaveItem"("employeeId");
+
+-- CreateIndex
+CREATE INDEX "PayrollLeaveItem_payrollRunItemId_idx" ON "PayrollLeaveItem"("payrollRunItemId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "PayrollLeaveItem_payrollRunItemId_leaveType_key" ON "PayrollLeaveItem"("payrollRunItemId", "leaveType");
+
+-- CreateIndex
+CREATE INDEX "PayrollNotification_recipientId_read_idx" ON "PayrollNotification"("recipientId", "read");
 
 -- CreateIndex
 CREATE UNIQUE INDEX "ComplianceRule_ruleCode_key" ON "ComplianceRule"("ruleCode");
@@ -1438,7 +1760,22 @@ CREATE INDEX "ImportFolder_companyId_idx" ON "ImportFolder"("companyId");
 CREATE INDEX "ImportFolder_parentId_idx" ON "ImportFolder"("parentId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "PayrollNetPay_payrollRunItemId_key" ON "PayrollNetPay"("payrollRunItemId");
+CREATE INDEX "PayrollBatch_payrollPeriodId_idx" ON "PayrollBatch"("payrollPeriodId");
+
+-- CreateIndex
+CREATE INDEX "PayrollBatchEmployee_payrollBatchId_idx" ON "PayrollBatchEmployee"("payrollBatchId");
+
+-- CreateIndex
+CREATE INDEX "PayrollBatchEmployee_payrollPeriodId_idx" ON "PayrollBatchEmployee"("payrollPeriodId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "PayrollBatchEmployee_employeeId_payrollPeriodId_key" ON "PayrollBatchEmployee"("employeeId", "payrollPeriodId");
+
+-- AddForeignKey
+ALTER TABLE "Company" ADD CONSTRAINT "Company_baseCurrencyId_fkey" FOREIGN KEY ("baseCurrencyId") REFERENCES "SystemCurrency"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "Employee" ADD CONSTRAINT "Employee_branchId_fkey" FOREIGN KEY ("branchId") REFERENCES "Branch"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Employee" ADD CONSTRAINT "Employee_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1447,16 +1784,13 @@ ALTER TABLE "Employee" ADD CONSTRAINT "Employee_companyId_fkey" FOREIGN KEY ("co
 ALTER TABLE "Employee" ADD CONSTRAINT "Employee_departmentId_fkey" FOREIGN KEY ("departmentId") REFERENCES "Department"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Employee" ADD CONSTRAINT "Employee_branchId_fkey" FOREIGN KEY ("branchId") REFERENCES "Branch"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "Employee" ADD CONSTRAINT "Employee_workUnitId_fkey" FOREIGN KEY ("workUnitId") REFERENCES "WorkUnit"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Employee" ADD CONSTRAINT "Employee_jobGradeId_fkey" FOREIGN KEY ("jobGradeId") REFERENCES "JobGrade"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Employee" ADD CONSTRAINT "Employee_positionId_fkey" FOREIGN KEY ("positionId") REFERENCES "Position"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "Employee" ADD CONSTRAINT "Employee_jobGradeId_fkey" FOREIGN KEY ("jobGradeId") REFERENCES "JobGrade"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "Employee" ADD CONSTRAINT "Employee_workUnitId_fkey" FOREIGN KEY ("workUnitId") REFERENCES "WorkUnit"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "EmployeeProfile" ADD CONSTRAINT "EmployeeProfile_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1492,10 +1826,10 @@ ALTER TABLE "JobGrade" ADD CONSTRAINT "JobGrade_companyId_fkey" FOREIGN KEY ("co
 ALTER TABLE "Department" ADD CONSTRAINT "Department_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "SalaryHistory" ADD CONSTRAINT "SalaryHistory_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "SalaryHistory" ADD CONSTRAINT "SalaryHistory_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "SalaryHistory" ADD CONSTRAINT "SalaryHistory_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "SalaryHistory" ADD CONSTRAINT "SalaryHistory_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "TaxBracket" ADD CONSTRAINT "TaxBracket_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1534,16 +1868,34 @@ ALTER TABLE "EarningsItem" ADD CONSTRAINT "EarningsItem_salaryStructureId_fkey" 
 ALTER TABLE "DeductionItem" ADD CONSTRAINT "DeductionItem_salaryStructureId_fkey" FOREIGN KEY ("salaryStructureId") REFERENCES "SalaryStructure"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "EmployeeDeduction" ADD CONSTRAINT "EmployeeDeduction_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "EmployeeDeduction" ADD CONSTRAINT "EmployeeDeduction_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "EmployeeDeduction" ADD CONSTRAINT "EmployeeDeduction_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "EmployeeDeduction" ADD CONSTRAINT "EmployeeDeduction_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "DeductionPaymentPlan" ADD CONSTRAINT "DeductionPaymentPlan_employeeDeductionId_fkey" FOREIGN KEY ("employeeDeductionId") REFERENCES "EmployeeDeduction"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "Configuration" ADD CONSTRAINT "Configuration_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "SystemCurrency" ADD CONSTRAINT "SystemCurrency_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "CurrencyRate" ADD CONSTRAINT "CurrencyRate_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "CurrencyRate" ADD CONSTRAINT "CurrencyRate_fromCurrencyId_fkey" FOREIGN KEY ("fromCurrencyId") REFERENCES "SystemCurrency"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "CurrencyRate" ADD CONSTRAINT "CurrencyRate_toCurrencyId_fkey" FOREIGN KEY ("toCurrencyId") REFERENCES "SystemCurrency"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PayslipNotificationSettings" ADD CONSTRAINT "PayslipNotificationSettings_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PayFrequency" ADD CONSTRAINT "PayFrequency_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "FiscalYear" ADD CONSTRAINT "FiscalYear_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1558,10 +1910,13 @@ ALTER TABLE "PayrollPeriod" ADD CONSTRAINT "PayrollPeriod_fiscalYearId_fkey" FOR
 ALTER TABLE "PayrollRun" ADD CONSTRAINT "PayrollRun_payrollPeriodId_fkey" FOREIGN KEY ("payrollPeriodId") REFERENCES "PayrollPeriod"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "PayrollRunItem" ADD CONSTRAINT "PayrollRunItem_payrollRunId_fkey" FOREIGN KEY ("payrollRunId") REFERENCES "PayrollRun"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "PayrollRun" ADD CONSTRAINT "PayrollRun_payrollBatchId_fkey" FOREIGN KEY ("payrollBatchId") REFERENCES "PayrollBatch"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "PayrollRunItem" ADD CONSTRAINT "PayrollRunItem_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PayrollRunItem" ADD CONSTRAINT "PayrollRunItem_payrollRunId_fkey" FOREIGN KEY ("payrollRunId") REFERENCES "PayrollRun"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "PayrollEarning" ADD CONSTRAINT "PayrollEarning_payrollRunItemId_fkey" FOREIGN KEY ("payrollRunItemId") REFERENCES "PayrollRunItem"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1579,16 +1934,16 @@ ALTER TABLE "PayrollPension" ADD CONSTRAINT "PayrollPension_payrollRunItemId_fke
 ALTER TABLE "PayrollOvertime" ADD CONSTRAINT "PayrollOvertime_payrollRunItemId_fkey" FOREIGN KEY ("payrollRunItemId") REFERENCES "PayrollRunItem"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "PayrollBonus" ADD CONSTRAINT "PayrollBonus_payrollRunItemId_fkey" FOREIGN KEY ("payrollRunItemId") REFERENCES "PayrollRunItem"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE "PayrollBonus" ADD CONSTRAINT "PayrollBonus_bonusRuleId_fkey" FOREIGN KEY ("bonusRuleId") REFERENCES "BonusRule"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "PayrollAllowance" ADD CONSTRAINT "PayrollAllowance_payrollRunItemId_fkey" FOREIGN KEY ("payrollRunItemId") REFERENCES "PayrollRunItem"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "PayrollBonus" ADD CONSTRAINT "PayrollBonus_payrollRunItemId_fkey" FOREIGN KEY ("payrollRunItemId") REFERENCES "PayrollRunItem"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "PayrollAllowance" ADD CONSTRAINT "PayrollAllowance_actingAssignmentId_fkey" FOREIGN KEY ("actingAssignmentId") REFERENCES "ActingAssignment"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PayrollAllowance" ADD CONSTRAINT "PayrollAllowance_payrollRunItemId_fkey" FOREIGN KEY ("payrollRunItemId") REFERENCES "PayrollRunItem"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "PayrollProration" ADD CONSTRAINT "PayrollProration_payrollRunItemId_fkey" FOREIGN KEY ("payrollRunItemId") REFERENCES "PayrollRunItem"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1606,19 +1961,37 @@ ALTER TABLE "AttendanceRecord" ADD CONSTRAINT "AttendanceRecord_attendanceImport
 ALTER TABLE "AttendanceRecord" ADD CONSTRAINT "AttendanceRecord_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "OvertimeRecord" ADD CONSTRAINT "OvertimeRecord_attendanceRecordId_fkey" FOREIGN KEY ("attendanceRecordId") REFERENCES "AttendanceRecord"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "OvertimeRecord" ADD CONSTRAINT "OvertimeRecord_attendanceRecordId_fkey" FOREIGN KEY ("attendanceRecordId") REFERENCES "AttendanceRecord"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ActingAssignment" ADD CONSTRAINT "ActingAssignment_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "OvertimeRecord" ADD CONSTRAINT "OvertimeRecord_attendanceMonthlySummaryId_fkey" FOREIGN KEY ("attendanceMonthlySummaryId") REFERENCES "AttendanceMonthlySummary"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ActingAssignment" ADD CONSTRAINT "ActingAssignment_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "AttendanceMonthlySummary" ADD CONSTRAINT "AttendanceMonthlySummary_attendanceImportId_fkey" FOREIGN KEY ("attendanceImportId") REFERENCES "AttendanceImport"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AttendanceMonthlySummary" ADD CONSTRAINT "AttendanceMonthlySummary_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AttendancePeriodSummary" ADD CONSTRAINT "AttendancePeriodSummary_attendanceImportId_fkey" FOREIGN KEY ("attendanceImportId") REFERENCES "AttendanceImport"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "AttendancePeriodSummary" ADD CONSTRAINT "AttendancePeriodSummary_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ActingAssignment" ADD CONSTRAINT "ActingAssignment_actingAllowanceRuleId_fkey" FOREIGN KEY ("actingAllowanceRuleId") REFERENCES "ActingAllowanceRule"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ActingAssignment" ADD CONSTRAINT "ActingAssignment_actingPositionId_fkey" FOREIGN KEY ("actingPositionId") REFERENCES "Position"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ActingAssignment" ADD CONSTRAINT "ActingAssignment_actingAllowanceRuleId_fkey" FOREIGN KEY ("actingAllowanceRuleId") REFERENCES "ActingAllowanceRule"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "ActingAssignment" ADD CONSTRAINT "ActingAssignment_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ActingAssignment" ADD CONSTRAINT "ActingAssignment_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ActingAssignment" ADD CONSTRAINT "ActingAssignment_replacedEmployeeId_fkey" FOREIGN KEY ("replacedEmployeeId") REFERENCES "Employee"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "PayslipTemplate" ADD CONSTRAINT "PayslipTemplate_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1630,13 +2003,37 @@ ALTER TABLE "Payslip" ADD CONSTRAINT "Payslip_payrollRunItemId_fkey" FOREIGN KEY
 ALTER TABLE "Payslip" ADD CONSTRAINT "Payslip_templateId_fkey" FOREIGN KEY ("templateId") REFERENCES "PayslipTemplate"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "LeaveDeduction" ADD CONSTRAINT "LeaveDeduction_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
 ALTER TABLE "LeaveDeduction" ADD CONSTRAINT "LeaveDeduction_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "LeaveDeduction" ADD CONSTRAINT "LeaveDeduction_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "LeaveDeduction" ADD CONSTRAINT "LeaveDeduction_payrollPeriodId_fkey" FOREIGN KEY ("payrollPeriodId") REFERENCES "PayrollPeriod"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "LeaveBalance" ADD CONSTRAINT "LeaveBalance_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "LeaveBalance" ADD CONSTRAINT "LeaveBalance_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "LeaveApplication" ADD CONSTRAINT "LeaveApplication_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "LeaveApplication" ADD CONSTRAINT "LeaveApplication_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PayrollLeaveItem" ADD CONSTRAINT "PayrollLeaveItem_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PayrollLeaveItem" ADD CONSTRAINT "PayrollLeaveItem_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PayrollLeaveItem" ADD CONSTRAINT "PayrollLeaveItem_payrollPeriodId_fkey" FOREIGN KEY ("payrollPeriodId") REFERENCES "PayrollPeriod"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PayrollLeaveItem" ADD CONSTRAINT "PayrollLeaveItem_payrollRunItemId_fkey" FOREIGN KEY ("payrollRunItemId") REFERENCES "PayrollRunItem"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ApprovalWorkflow" ADD CONSTRAINT "ApprovalWorkflow_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1648,7 +2045,7 @@ ALTER TABLE "ApprovalStep" ADD CONSTRAINT "ApprovalStep_approvalWorkflowId_fkey"
 ALTER TABLE "ApprovalStep" ADD CONSTRAINT "ApprovalStep_requiredRoleId_fkey" FOREIGN KEY ("requiredRoleId") REFERENCES "AppRole"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ApprovalRequest" ADD CONSTRAINT "ApprovalRequest_payrollRunId_fkey" FOREIGN KEY ("payrollRunId") REFERENCES "PayrollRun"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "ApprovalStep" ADD CONSTRAINT "ApprovalStep_alternateRoleId_fkey" FOREIGN KEY ("alternateRoleId") REFERENCES "AppRole"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ApprovalRequest" ADD CONSTRAINT "ApprovalRequest_attendanceImportId_fkey" FOREIGN KEY ("attendanceImportId") REFERENCES "AttendanceImport"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1657,16 +2054,19 @@ ALTER TABLE "ApprovalRequest" ADD CONSTRAINT "ApprovalRequest_attendanceImportId
 ALTER TABLE "ApprovalRequest" ADD CONSTRAINT "ApprovalRequest_paymentFileId_fkey" FOREIGN KEY ("paymentFileId") REFERENCES "PaymentFile"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ApprovalAction" ADD CONSTRAINT "ApprovalAction_approvalRequestId_fkey" FOREIGN KEY ("approvalRequestId") REFERENCES "ApprovalRequest"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "ApprovalRequest" ADD CONSTRAINT "ApprovalRequest_payrollRunId_fkey" FOREIGN KEY ("payrollRunId") REFERENCES "PayrollRun"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ApprovalAction" ADD CONSTRAINT "ApprovalAction_actorId_fkey" FOREIGN KEY ("actorId") REFERENCES "AppUser"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ManualAdjustment" ADD CONSTRAINT "ManualAdjustment_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "ApprovalAction" ADD CONSTRAINT "ApprovalAction_approvalRequestId_fkey" FOREIGN KEY ("approvalRequestId") REFERENCES "ApprovalRequest"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ManualAdjustment" ADD CONSTRAINT "ManualAdjustment_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "ManualAdjustment" ADD CONSTRAINT "ManualAdjustment_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ManualAdjustment" ADD CONSTRAINT "ManualAdjustment_payrollRunId_fkey" FOREIGN KEY ("payrollRunId") REFERENCES "PayrollRun"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1684,19 +2084,19 @@ ALTER TABLE "ComplianceCheck" ADD CONSTRAINT "ComplianceCheck_complianceRuleId_f
 ALTER TABLE "Attachment" ADD CONSTRAINT "Attachment_folderId_fkey" FOREIGN KEY ("folderId") REFERENCES "ImportFolder"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "BankAccount" ADD CONSTRAINT "BankAccount_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "BankAccount" ADD CONSTRAINT "BankAccount_bankId_fkey" FOREIGN KEY ("bankId") REFERENCES "Bank"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "BankAccount" ADD CONSTRAINT "BankAccount_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "BankAccount" ADD CONSTRAINT "BankAccount_bankId_fkey" FOREIGN KEY ("bankId") REFERENCES "Bank"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "PaymentFile" ADD CONSTRAINT "PaymentFile_payrollRunId_fkey" FOREIGN KEY ("payrollRunId") REFERENCES "PayrollRun"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "BankAccount" ADD CONSTRAINT "BankAccount_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "PaymentFile" ADD CONSTRAINT "PaymentFile_bankId_fkey" FOREIGN KEY ("bankId") REFERENCES "Bank"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PaymentFile" ADD CONSTRAINT "PaymentFile_payrollRunId_fkey" FOREIGN KEY ("payrollRunId") REFERENCES "PayrollRun"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ErcaSubmission" ADD CONSTRAINT "ErcaSubmission_payrollPeriodId_fkey" FOREIGN KEY ("payrollPeriodId") REFERENCES "PayrollPeriod"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -1720,10 +2120,10 @@ ALTER TABLE "OkrSyncLog" ADD CONSTRAINT "OkrSyncLog_payrollPeriodId_fkey" FOREIG
 ALTER TABLE "ReportTemplate" ADD CONSTRAINT "ReportTemplate_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ReportExport" ADD CONSTRAINT "ReportExport_reportTemplateId_fkey" FOREIGN KEY ("reportTemplateId") REFERENCES "ReportTemplate"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "ReportExport" ADD CONSTRAINT "ReportExport_payrollPeriodId_fkey" FOREIGN KEY ("payrollPeriodId") REFERENCES "PayrollPeriod"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "ReportExport" ADD CONSTRAINT "ReportExport_payrollPeriodId_fkey" FOREIGN KEY ("payrollPeriodId") REFERENCES "PayrollPeriod"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+ALTER TABLE "ReportExport" ADD CONSTRAINT "ReportExport_reportTemplateId_fkey" FOREIGN KEY ("reportTemplateId") REFERENCES "ReportTemplate"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE "ArchiveBatch" ADD CONSTRAINT "ArchiveBatch_companyId_fkey" FOREIGN KEY ("companyId") REFERENCES "Company"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
@@ -1738,4 +2138,13 @@ ALTER TABLE "StatutoryReport" ADD CONSTRAINT "StatutoryReport_payrollPeriodId_fk
 ALTER TABLE "ImportFolder" ADD CONSTRAINT "ImportFolder_parentId_fkey" FOREIGN KEY ("parentId") REFERENCES "ImportFolder"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
-ALTER TABLE "PayrollNetPay" ADD CONSTRAINT "PayrollNetPay_payrollRunItemId_fkey" FOREIGN KEY ("payrollRunItemId") REFERENCES "PayrollRunItem"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+ALTER TABLE "PayrollBatch" ADD CONSTRAINT "PayrollBatch_payrollPeriodId_fkey" FOREIGN KEY ("payrollPeriodId") REFERENCES "PayrollPeriod"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PayrollBatchEmployee" ADD CONSTRAINT "PayrollBatchEmployee_employeeId_fkey" FOREIGN KEY ("employeeId") REFERENCES "Employee"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PayrollBatchEmployee" ADD CONSTRAINT "PayrollBatchEmployee_payrollBatchId_fkey" FOREIGN KEY ("payrollBatchId") REFERENCES "PayrollBatch"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "PayrollBatchEmployee" ADD CONSTRAINT "PayrollBatchEmployee_payrollPeriodId_fkey" FOREIGN KEY ("payrollPeriodId") REFERENCES "PayrollPeriod"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
