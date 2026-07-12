@@ -170,12 +170,12 @@ export const ApprovalWorkflowController = {
         where: { id: requestId },
         include: {
           attendanceImport: { include: { payrollPeriod: { select: { companyId: true } } } },
-          payrollRun: { select: { companyId: true } },
+          payrollRun: { include: { payrollPeriod: { select: { companyId: true } } } },
         },
       });
       const derived =
         approvalReq?.attendanceImport?.payrollPeriod?.companyId ??
-        approvalReq?.payrollRun?.companyId;
+        approvalReq?.payrollRun?.payrollPeriod?.companyId;
       if (!derived) {
         throw new CustomError(httpStatus.BAD_REQUEST, "Cannot determine company for this request");
       }
@@ -216,12 +216,12 @@ export const ApprovalWorkflowController = {
         where: { id: requestId },
         include: {
           attendanceImport: { include: { payrollPeriod: { select: { companyId: true } } } },
-          payrollRun: { select: { companyId: true } },
+          payrollRun: { include: { payrollPeriod: { select: { companyId: true } } } },
         },
       });
       const derived =
         approvalReq?.attendanceImport?.payrollPeriod?.companyId ??
-        approvalReq?.payrollRun?.companyId;
+        approvalReq?.payrollRun?.payrollPeriod?.companyId;
       if (!derived) {
         throw new CustomError(httpStatus.BAD_REQUEST, "Cannot determine company for this request");
       }
