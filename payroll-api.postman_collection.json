@@ -1,0 +1,766 @@
+{
+  "info": {
+    "name": "Payroll Management System API",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "description": "Complete API collection for the Payroll Management System. All configuration and integration endpoints under /api/v1.\n\nPath parameters like :id and :salaryStructureId are Postman path variables — fill them in before sending the request."
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:3000/api/v1", "type": "string" },
+    { "key": "authBaseUrl", "value": "http://localhost:5000/api/v1", "type": "string" },
+    { "key": "token", "value": "", "type": "string" }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      { "key": "token", "value": "{{token}}", "type": "string" }
+    ]
+  },
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "url": {
+              "raw": "http://localhost:3000/health",
+              "host": ["http://localhost:3000"],
+              "path": ["health"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth (Login here first)",
+      "item": [
+        {
+          "name": "Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "const json = pm.response.json();",
+                  "const token = json.token || json.data?.token || json.accessToken || json.data?.accessToken;",
+                  "if (token) {",
+                  "  pm.collectionVariables.set('token', token);",
+                  "  console.log('Token saved to collection variables');",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@company.com\",\n  \"password\": \"your-password\"\n}"
+            },
+            "url": {
+              "raw": "{{authBaseUrl}}/auth/login",
+              "host": ["{{authBaseUrl}}"],
+              "path": ["auth", "login"]
+            }
+          },
+          "description": "Login against the Auth Service. The returned JWT is automatically saved to the collection variable and used for all subsequent requests."
+        }
+      ]
+    },
+    {
+      "name": "Configurations",
+      "item": [
+        {
+          "name": "Fiscal Year",
+          "item": [
+            {
+              "name": "Create Fiscal Year",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"name\": \"FY 2026\",\n  \"startDate\": \"2026-01-01\",\n  \"endDate\": \"2026-12-31\"\n}" },
+                "url": { "raw": "{{baseUrl}}/configurations/fiscal-year", "host": ["{{baseUrl}}"], "path": ["configurations", "fiscal-year"] }
+              }
+            },
+            {
+              "name": "List Fiscal Years",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/configurations/fiscal-years", "host": ["{{baseUrl}}"], "path": ["configurations", "fiscal-years"] }
+              }
+            },
+            {
+              "name": "Get Fiscal Year by ID",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/fiscal-year/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "fiscal-year", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Update Fiscal Year",
+              "request": {
+                "method": "PUT",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"name\": \"FY 2026 Updated\",\n  \"startDate\": \"2026-01-01\",\n  \"endDate\": \"2026-12-31\"\n}" },
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/fiscal-year/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "fiscal-year", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Delete Fiscal Year",
+              "request": {
+                "method": "DELETE",
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/fiscal-year/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "fiscal-year", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Batch Save Fiscal Years",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"fiscalYears\": [\n    { \"name\": \"FY 2026\", \"startDate\": \"2026-01-01\", \"endDate\": \"2026-12-31\" }\n  ]\n}" },
+                "url": { "raw": "{{baseUrl}}/configurations/fiscal-years/save-configuration", "host": ["{{baseUrl}}"], "path": ["configurations", "fiscal-years", "save-configuration"] }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Tax Bracket",
+          "item": [
+            {
+              "name": "Create Tax Bracket",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"lowerBound\": 0,\n  \"upperBound\": 600,\n  \"rate\": 0,\n  \"deductionAmount\": 0,\n  \"effectiveDate\": \"2026-01-01\"\n}" },
+                "url": { "raw": "{{baseUrl}}/configurations/tax-bracket", "host": ["{{baseUrl}}"], "path": ["configurations", "tax-bracket"] }
+              }
+            },
+            {
+              "name": "List Tax Brackets",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/configurations/tax-brackets", "host": ["{{baseUrl}}"], "path": ["configurations", "tax-brackets"] }
+              }
+            },
+            {
+              "name": "Get Tax Bracket by ID",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/tax-bracket/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "tax-bracket", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Update Tax Bracket",
+              "request": {
+                "method": "PUT",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"lowerBound\": 0,\n  \"upperBound\": 600,\n  \"rate\": 0,\n  \"deductionAmount\": 0,\n  \"effectiveDate\": \"2026-01-01\"\n}" },
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/tax-bracket/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "tax-bracket", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Delete Tax Bracket",
+              "request": {
+                "method": "DELETE",
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/tax-bracket/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "tax-bracket", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Batch Save Tax Brackets",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"taxBrackets\": [\n    { \"lowerBound\": 0, \"upperBound\": 600, \"rate\": 0, \"deductionAmount\": 0, \"effectiveDate\": \"2026-01-01\" }\n  ]\n}" },
+                "url": { "raw": "{{baseUrl}}/configurations/tax-brackets/save-configuration", "host": ["{{baseUrl}}"], "path": ["configurations", "tax-brackets", "save-configuration"] }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Pension Rule",
+          "item": [
+            {
+              "name": "Create Pension Rule",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"employeeRate\": 7,\n  \"employerRate\": 11,\n  \"basis\": \"BASIC\",\n  \"mandatoryForForeigners\": false,\n  \"remittanceDeadlineDays\": 30,\n  \"effectiveDate\": \"2026-01-01\"\n}" },
+                "url": { "raw": "{{baseUrl}}/configurations/pension-rule", "host": ["{{baseUrl}}"], "path": ["configurations", "pension-rule"] }
+              }
+            },
+            {
+              "name": "List Pension Rules",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/configurations/pension-rules", "host": ["{{baseUrl}}"], "path": ["configurations", "pension-rules"] }
+              }
+            },
+            {
+              "name": "Get Pension Rule by ID",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/pension-rule/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "pension-rule", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Update Pension Rule",
+              "request": {
+                "method": "PUT",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"employeeRate\": 7,\n  \"employerRate\": 11,\n  \"basis\": \"BASIC\",\n  \"mandatoryForForeigners\": false,\n  \"remittanceDeadlineDays\": 30,\n  \"effectiveDate\": \"2026-01-01\"\n}" },
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/pension-rule/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "pension-rule", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Delete Pension Rule",
+              "request": {
+                "method": "DELETE",
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/pension-rule/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "pension-rule", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Batch Save Pension Rules",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"pensionRules\": [\n    { \"employeeRate\": 7, \"employerRate\": 11, \"basis\": \"BASIC\", \"mandatoryForForeigners\": false, \"remittanceDeadlineDays\": 30, \"effectiveDate\": \"2026-01-01\" }\n  ]\n}" },
+                "url": { "raw": "{{baseUrl}}/configurations/pension-rules/save-configuration", "host": ["{{baseUrl}}"], "path": ["configurations", "pension-rules", "save-configuration"] }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Overtime Rule",
+          "item": [
+            {
+              "name": "Create Overtime Rule",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"category\": \"WEEKDAY_DAY\",\n  \"rate\": 1.25,\n  \"weeklyCapHours\": 20,\n  \"effectiveDate\": \"2026-01-01\"\n}" },
+                "url": { "raw": "{{baseUrl}}/configurations/overtime-rule", "host": ["{{baseUrl}}"], "path": ["configurations", "overtime-rule"] }
+              }
+            },
+            {
+              "name": "List Overtime Rules",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/configurations/overtime-rules", "host": ["{{baseUrl}}"], "path": ["configurations", "overtime-rules"] }
+              }
+            },
+            {
+              "name": "Get Overtime Rule by ID",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/overtime-rule/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "overtime-rule", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Update Overtime Rule",
+              "request": {
+                "method": "PUT",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"category\": \"WEEKDAY_DAY\",\n  \"rate\": 1.5,\n  \"weeklyCapHours\": 20,\n  \"effectiveDate\": \"2026-01-01\"\n}" },
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/overtime-rule/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "overtime-rule", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Delete Overtime Rule",
+              "request": {
+                "method": "DELETE",
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/overtime-rule/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "overtime-rule", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Batch Save Overtime Rules",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"overtimeRules\": [\n    { \"category\": \"WEEKDAY_DAY\", \"rate\": 1.25, \"weeklyCapHours\": 20, \"effectiveDate\": \"2026-01-01\" }\n  ]\n}" },
+                "url": { "raw": "{{baseUrl}}/configurations/overtime-rules/save-configuration", "host": ["{{baseUrl}}"], "path": ["configurations", "overtime-rules", "save-configuration"] }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Payroll Period",
+          "item": [
+            {
+              "name": "Create Payroll Period",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"cycle\": \"MONTHLY\",\n  \"startDate\": \"2026-01-01\",\n  \"endDate\": \"2026-01-31\",\n  \"dateOfPayment\": \"2026-02-05\"\n}" },
+                "url": { "raw": "{{baseUrl}}/configurations/payroll-period", "host": ["{{baseUrl}}"], "path": ["configurations", "payroll-period"] }
+              }
+            },
+            {
+              "name": "Get Current Payroll Period",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/configurations/payroll-period/current", "host": ["{{baseUrl}}"], "path": ["configurations", "payroll-period", "current"] }
+              }
+            },
+            {
+              "name": "List Payroll Periods",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/configurations/payroll-periods", "host": ["{{baseUrl}}"], "path": ["configurations", "payroll-periods"] }
+              }
+            },
+            {
+              "name": "Get Payroll Period by ID",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/payroll-period/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "payroll-period", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Update Payroll Period",
+              "request": {
+                "method": "PUT",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"cycle\": \"MONTHLY\",\n  \"startDate\": \"2026-01-01\",\n  \"endDate\": \"2026-01-31\",\n  \"dateOfPayment\": \"2026-02-10\"\n}" },
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/payroll-period/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "payroll-period", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Delete Payroll Period",
+              "request": {
+                "method": "DELETE",
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/payroll-period/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "payroll-period", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Batch Save Payroll Periods",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"payrollPeriods\": [\n    { \"cycle\": \"MONTHLY\", \"startDate\": \"2026-01-01\", \"endDate\": \"2026-01-31\", \"dateOfPayment\": \"2026-02-05\" }\n  ]\n}" },
+                "url": { "raw": "{{baseUrl}}/configurations/payroll-periods/save-configuration", "host": ["{{baseUrl}}"], "path": ["configurations", "payroll-periods", "save-configuration"] }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Salary Structure",
+          "item": [
+            {
+              "name": "Create Salary Structure",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"name\": \"Standard\"\n}" },
+                "url": { "raw": "{{baseUrl}}/configurations/salary-structure", "host": ["{{baseUrl}}"], "path": ["configurations", "salary-structure"] }
+              }
+            },
+            {
+              "name": "List Salary Structures",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/configurations/salary-structures", "host": ["{{baseUrl}}"], "path": ["configurations", "salary-structures"] }
+              }
+            },
+            {
+              "name": "Get Salary Structure by ID",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/salary-structure/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "salary-structure", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Update Salary Structure",
+              "request": {
+                "method": "PUT",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"name\": \"Standard Updated\"\n}" },
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/salary-structure/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "salary-structure", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Delete Salary Structure",
+              "request": {
+                "method": "DELETE",
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/salary-structure/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "salary-structure", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Batch Save Salary Structures",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"salaryStructures\": [\n    { \"name\": \"Standard\" }\n  ]\n}" },
+                "url": { "raw": "{{baseUrl}}/configurations/salary-structures/save-configuration", "host": ["{{baseUrl}}"], "path": ["configurations", "salary-structures", "save-configuration"] }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Deduction Config",
+          "item": [
+            {
+              "name": "Create Deduction Config",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"deductionType\": \"PENSION_EMPLOYEE\",\n  \"label\": \"Pension EE\",\n  \"amountType\": \"PERCENTAGE\",\n  \"percent\": 7\n}" },
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/deduction-config/:salaryStructureId",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "deduction-config", ":salaryStructureId"],
+                  "variable": [{ "key": "salaryStructureId", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "List Deduction Configs",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/configurations/deduction-configs", "host": ["{{baseUrl}}"], "path": ["configurations", "deduction-configs"] }
+              }
+            },
+            {
+              "name": "Get Deduction Config by ID",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/deduction-config/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "deduction-config", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Update Deduction Config",
+              "request": {
+                "method": "PUT",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"deductionType\": \"PENSION_EMPLOYEE\",\n  \"label\": \"Pension EE\",\n  \"amountType\": \"PERCENTAGE\",\n  \"percent\": 7\n}" },
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/deduction-config/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "deduction-config", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Delete Deduction Config",
+              "request": {
+                "method": "DELETE",
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/deduction-config/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "deduction-config", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Batch Save Deduction Configs (by Salary Structure)",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"deductions\": [\n    { \"deductionType\": \"PENSION_EMPLOYEE\", \"label\": \"Pension EE\", \"amountType\": \"PERCENTAGE\", \"percent\": 7 }\n  ]\n}" },
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/salary-structure/:salaryStructureId/deduction-configs/save-configuration",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "salary-structure", ":salaryStructureId", "deduction-configs", "save-configuration"],
+                  "variable": [{ "key": "salaryStructureId", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Batch Save Deduction Configs (Simple)",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "[\n  {\n    \"salaryStructureId\": 1,\n    \"deductionType\": \"PENSION_EMPLOYEE\",\n    \"label\": \"Pension EE\",\n    \"amountType\": \"PERCENTAGE\",\n    \"percent\": 7\n  }\n]" },
+                "url": { "raw": "{{baseUrl}}/configurations/deduction-configs/save-configuration", "host": ["{{baseUrl}}"], "path": ["configurations", "deduction-configs", "save-configuration"] }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Allowance Config",
+          "item": [
+            {
+              "name": "Create Allowance Config",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"earningType\": \"HOUSING_ALLOWANCE\",\n  \"label\": \"Housing\",\n  \"isTaxable\": true\n}" },
+                "url": { "raw": "{{baseUrl}}/configurations/allowance-config", "host": ["{{baseUrl}}"], "path": ["configurations", "allowance-config"] }
+              }
+            },
+            {
+              "name": "List Allowance Configs",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/configurations/allowance-configs", "host": ["{{baseUrl}}"], "path": ["configurations", "allowance-configs"] }
+              }
+            },
+            {
+              "name": "Get Allowance Config by ID",
+              "request": {
+                "method": "GET",
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/allowance-config/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "allowance-config", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Update Allowance Config",
+              "request": {
+                "method": "PUT",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"label\": \"Housing Updated\",\n  \"isTaxable\": true\n}" },
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/allowance-config/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "allowance-config", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Delete Allowance Config",
+              "request": {
+                "method": "DELETE",
+                "url": {
+                  "raw": "{{baseUrl}}/configurations/allowance-config/:id",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["configurations", "allowance-config", ":id"],
+                  "variable": [{ "key": "id", "value": "" }]
+                }
+              }
+            },
+            {
+              "name": "Batch Save Allowance Configs",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"allowanceConfigs\": [\n    { \"earningType\": \"HOUSING_ALLOWANCE\", \"label\": \"Housing\", \"isTaxable\": true }\n  ]\n}" },
+                "url": { "raw": "{{baseUrl}}/configurations/allowance-configs/save-configuration", "host": ["{{baseUrl}}"], "path": ["configurations", "allowance-configs", "save-configuration"] }
+              }
+            }
+          ]
+        },
+        {
+          "name": "Workdays Config",
+          "item": [
+            {
+              "name": "Get Workdays Config",
+              "request": {
+                "method": "GET",
+                "url": { "raw": "{{baseUrl}}/configurations/workdays-config", "host": ["{{baseUrl}}"], "path": ["configurations", "workdays-config"] }
+              }
+            },
+            {
+              "name": "Update Workdays Config (PUT)",
+              "request": {
+                "method": "PUT",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"defaultMonthlyWorkdays\": 22,\n  \"weeklyWorkingDays\": 5,\n  \"dailyWorkingHours\": 8\n}" },
+                "url": { "raw": "{{baseUrl}}/configurations/workdays-config", "host": ["{{baseUrl}}"], "path": ["configurations", "workdays-config"] }
+              }
+            },
+            {
+              "name": "Patch Workdays Config (PATCH)",
+              "request": {
+                "method": "PATCH",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"defaultMonthlyWorkdays\": 21\n}" },
+                "url": { "raw": "{{baseUrl}}/configurations/workdays-config", "host": ["{{baseUrl}}"], "path": ["configurations", "workdays-config"] }
+              }
+            },
+            {
+              "name": "Save Workdays Config",
+              "request": {
+                "method": "POST",
+                "header": [{ "key": "Content-Type", "value": "application/json" }],
+                "body": { "mode": "raw", "raw": "{\n  \"defaultMonthlyWorkdays\": 22,\n  \"weeklyWorkingDays\": 5,\n  \"dailyWorkingHours\": 8\n}" },
+                "url": { "raw": "{{baseUrl}}/configurations/workdays-config/save-configuration", "host": ["{{baseUrl}}"], "path": ["configurations", "workdays-config", "save-configuration"] }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Integrations",
+      "item": [
+        {
+          "name": "Webhook (no auth)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"source\": \"EMPLOYEE_MODULE\",\n  \"eventType\": \"employee.updated\",\n  \"payload\": {\n    \"company_id\": 1,\n    \"employee_id\": \"EMP001\"\n  }\n}" },
+            "url": { "raw": "{{baseUrl}}/integrations/webhook", "host": ["{{baseUrl}}"], "path": ["integrations", "webhook"] }
+          },
+          "description": "Receives webhook events from external systems. No auth required."
+        },
+        {
+          "name": "Trigger Sync (admin)",
+          "request": {
+            "method": "POST",
+            "url": { "raw": "{{baseUrl}}/integrations/sync/trigger", "host": ["{{baseUrl}}"], "path": ["integrations", "sync", "trigger"] }
+          },
+          "description": "Triggers a full sync from the Employee Module API. Uses the admin's JWT from the Authorization header."
+        },
+        {
+          "name": "Get Sync Logs",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/integrations/sync/logs", "host": ["{{baseUrl}}"], "path": ["integrations", "sync", "logs"] }
+          }
+        },
+        {
+          "name": "List API Credentials",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/integrations/credentials", "host": ["{{baseUrl}}"], "path": ["integrations", "credentials"] }
+          }
+        },
+        {
+          "name": "Create API Credential",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"system\": \"EMPLOYEE_MODULE\",\n  \"authType\": \"bearer\",\n  \"baseUrl\": \"https://employee-api.example.com/api/v1\",\n  \"credential\": \"your-api-token-here\"\n}" },
+            "url": { "raw": "{{baseUrl}}/integrations/credentials", "host": ["{{baseUrl}}"], "path": ["integrations", "credentials"] }
+          }
+        },
+        {
+          "name": "Rotate API Credential",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"credential\": \"new-api-token-here\"\n}" },
+            "url": {
+              "raw": "{{baseUrl}}/integrations/credentials/:id/rotate",
+              "host": ["{{baseUrl}}"],
+              "path": ["integrations", "credentials", ":id", "rotate"],
+              "variable": [{ "key": "id", "value": "" }]
+            }
+          }
+        },
+        {
+          "name": "Deactivate API Credential",
+          "request": {
+            "method": "DELETE",
+            "url": {
+              "raw": "{{baseUrl}}/integrations/credentials/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["integrations", "credentials", ":id"],
+              "variable": [{ "key": "id", "value": "" }]
+            }
+          }
+        },
+        {
+          "name": "Get Webhook Events",
+          "request": {
+            "method": "GET",
+            "url": { "raw": "{{baseUrl}}/integrations/webhook-events", "host": ["{{baseUrl}}"], "path": ["integrations", "webhook-events"] }
+          }
+        }
+      ]
+    }
+  ]
+}

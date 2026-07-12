@@ -1,0 +1,1884 @@
+generator client {
+  provider   = "prisma-client-js"
+  output     = "../src/generated/prisma"
+  engineType = "library"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id                   Int                   @id
+  name                 String
+  code                 String?
+  isActive             Boolean               @default(true)
+  syncedAt             DateTime              @default(now())
+  actingAllowanceRules ActingAllowanceRule[]
+  actingAssignments    ActingAssignment[]
+  allowanceConfigs     AllowanceConfig[]
+  approvalWorkflows    ApprovalWorkflow[]
+  archiveBatches       ArchiveBatch[]
+  bankAccounts         BankAccount[]
+  bonusRules           BonusRule[]
+  branches             Branch[]
+  complianceRules      ComplianceRule[]
+  configurations       Configuration[]
+  costSharingRules     CostSharingRule[]
+  departments          Department[]
+  employees            Employee[]
+  employeeDeductions   EmployeeDeduction[]
+  fiscalYears          FiscalYear[]
+  jobGrades            JobGrade[]
+  leaveApplications    LeaveApplication[]
+  leaveBalances        LeaveBalance[]
+  leaveDeductions      LeaveDeduction[]
+  manualAdjustments    ManualAdjustment[]
+  overtimeRules        OvertimeRule[]
+  payFrequencies            PayFrequency[]
+  payslipNotificationSettings PayslipNotificationSettings?
+  payrollLeaveItems          PayrollLeaveItem[]
+  payrollPeriods       PayrollPeriod[]
+  payslipTemplates     PayslipTemplate[]
+  pensionRules         PensionRule[]
+  positions            Position[]
+  reportTemplates      ReportTemplate[]
+  salaryHistories      SalaryHistory[]
+  salaryStructures     SalaryStructure[]
+  statutoryReports     StatutoryReport[]
+  taxBrackets          TaxBracket[]
+  workUnits            WorkUnit[]
+  currencies           SystemCurrency[]
+  currencyRates        CurrencyRate[]
+  baseCurrencyId       String?               @unique // FK to SystemCurrency.id for the company's base currency
+  baseCurrency         SystemCurrency?       @relation("BaseCurrency", fields: [baseCurrencyId], references: [id])
+}
+
+model Employee {
+  id                 String                     @id @default(uuid())
+  externalId         String?                    @unique
+  companyId          Int
+  userId             Int?
+  firstName          String
+  lastName           String
+  email              String?
+  tinNumber          String?
+  jobPosition        String?
+  hireDate           DateTime?
+  termDate           DateTime?
+  status             EmployeeStatus             @default(ACTIVE)
+  currency           Currency                   @default(ETB)
+  branchId           String?
+  departmentId       Int?
+  workUnitId         String?
+  positionId         String?
+  jobGradeId         String?
+  managerName        String?
+  metadata           Json?
+  syncedAt           DateTime                   @default(now())
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  actingAssignments       ActingAssignment[] @relation("ActingEmployee")
+  replacedActingAssignments ActingAssignment[] @relation("ReplacedEmployee")
+  monthlySummaries          AttendanceMonthlySummary[]
+  attendanceRecords  AttendanceRecord[]
+  bankAccounts       BankAccount[]
+  branch             Branch?                    @relation(fields: [branchId], references: [id])
+  company            Company                    @relation(fields: [companyId], references: [id])
+  department         Department?                @relation(fields: [departmentId], references: [id])
+  jobGrade           JobGrade?                  @relation(fields: [jobGradeId], references: [id])
+  position           Position?                  @relation(fields: [positionId], references: [id])
+  workUnit           WorkUnit?                  @relation(fields: [workUnitId], references: [id])
+  allowances         EmployeeAllowance[]
+  compensation       EmployeeCompensation?
+  employeeDeductions EmployeeDeduction[]
+  profile            EmployeeProfile?
+  employeeSyncLogs   EmployeeSyncLog[]
+  exceptionLogs      ExceptionLog[]
+  leaveApplications  LeaveApplication[]
+  leaveBalances      LeaveBalance[]
+  leaveDeductions    LeaveDeduction[]
+  manualAdjustments  ManualAdjustment[]
+  payrollLeaveItems        PayrollLeaveItem[]
+  payrollRunItems          PayrollRunItem[]
+  salaryHistories          SalaryHistory[]
+  attendancePeriodSummaries AttendancePeriodSummary[]
+  batchAssignments           PayrollBatchEmployee[]
+
+  @@index([companyId, status])
+  @@index([externalId])
+}
+
+model EmployeeProfile {
+  id                String    @id @default(uuid())
+  employeeId        String    @unique
+  gender            String?
+  dateOfBirth       DateTime?
+  employmentType    String?
+  probationEndDate  DateTime?
+  employmentEndDate DateTime?
+  placeOfWork       String?
+  contractReference String?
+  syncedAt          DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+  employee          Employee  @relation(fields: [employeeId], references: [id])
+}
+
+model EmployeeCompensation {
+  id          String   @id @default(uuid())
+  employeeId  String   @unique
+  basicSalary Decimal? @db.Decimal(15, 2)
+  grossSalary Decimal? @db.Decimal(15, 2)
+  taxablePay  Decimal? @db.Decimal(15, 2)
+  csBalance   Decimal? @db.Decimal(15, 2)
+  pensionElig Boolean  @default(true)
+  taxExempt   Boolean  @default(false)
+  pensionNo   String?
+  syncedAt    DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  employee    Employee @relation(fields: [employeeId], references: [id])
+}
+
+model EmployeeAllowance {
+  id            String        @id @default(uuid())
+  employeeId    String
+  allowanceType AllowanceType
+  amount        Decimal       @db.Decimal(15, 2)
+  isActive      Boolean       @default(true)
+  syncedAt      DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  employee      Employee      @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, allowanceType])
+  @@index([employeeId, isActive])
+}
+
+model AppUser {
+  id              Int              @id
+  email           String?
+  roleId          Int?
+  status          UserStatus       @default(ACTIVE)
+  syncedAt        DateTime         @default(now())
+  role            AppRole?         @relation(fields: [roleId], references: [id])
+  approvalActions ApprovalAction[]
+}
+
+model AppRole {
+  id                   Int            @id
+  name                 String
+  permissions          Json?
+  syncedAt             DateTime       @default(now())
+  users                AppUser[]
+  approvalSteps        ApprovalStep[] @relation("RequiredRole")
+  alternateApprovalSteps ApprovalStep[] @relation("AlternateRole")
+}
+
+model Bank {
+  id             Int             @id
+  name           String
+  code           String?
+  isActive       Boolean         @default(true)
+  syncedAt       DateTime        @default(now())
+  bankAccounts   BankAccount[]
+  bankExportJobs BankExportJob[]
+  paymentFiles   PaymentFile[]
+}
+
+model Branch {
+  id        String     @id @default(uuid())
+  companyId Int
+  name      String
+  location  String?
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  company   Company    @relation(fields: [companyId], references: [id])
+  employees Employee[]
+}
+
+model WorkUnit {
+  id           String      @id @default(uuid())
+  companyId    Int
+  departmentId Int?
+  name         String
+  code         String?
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  employees    Employee[]
+  company      Company     @relation(fields: [companyId], references: [id])
+  department   Department? @relation(fields: [departmentId], references: [id])
+}
+
+model Position {
+  id                String             @id @default(uuid())
+  companyId         Int
+  title             String
+  code              String?
+  jobGradeId        String?
+  basicSalary       Decimal?           @db.Decimal(15, 2)
+  grossSalary       Decimal?           @db.Decimal(15, 2)
+  currency          Currency           @default(ETB)
+  isActive          Boolean            @default(true)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  actingAssignments ActingAssignment[] @relation("ActingPosition")
+  employees         Employee[]
+  company           Company            @relation(fields: [companyId], references: [id])
+  jobGrade          JobGrade?          @relation(fields: [jobGradeId], references: [id])
+}
+
+model JobGrade {
+  id        String     @id @default(uuid())
+  companyId Int
+  name      String
+  code      String?
+  level     Int
+  minSalary Decimal?   @db.Decimal(15, 2)
+  maxSalary Decimal?   @db.Decimal(15, 2)
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  employees Employee[]
+  company   Company    @relation(fields: [companyId], references: [id])
+  positions Position[]
+}
+
+model Department {
+  id        Int        @id
+  companyId Int
+  name      String
+  code      String?
+  isActive  Boolean    @default(true)
+  syncedAt  DateTime   @default(now())
+  company   Company    @relation(fields: [companyId], references: [id])
+  employees Employee[]
+  workUnits WorkUnit[]
+}
+
+model SalaryHistory {
+  id            String    @id @default(uuid())
+  employeeId    String
+  companyId     Int
+  basicSalary   Decimal   @db.Decimal(15, 2)
+  currency      Currency
+  effectiveDate DateTime
+  endDate       DateTime?
+  reason        String?
+  createdAt     DateTime  @default(now())
+  company       Company   @relation(fields: [companyId], references: [id])
+  employee      Employee  @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, effectiveDate])
+}
+
+model TaxBracket {
+  id              String    @id @default(uuid())
+  companyId       Int
+  lowerBound      Decimal   @db.Decimal(15, 2)
+  upperBound      Decimal?  @db.Decimal(15, 2)
+  rate            Decimal   @db.Decimal(5, 4)
+  deductionAmount Decimal   @db.Decimal(15, 2)
+  effectiveDate   DateTime
+  expiryDate      DateTime?
+  isActive        Boolean   @default(true)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  company         Company   @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, isActive])
+  @@index([companyId, effectiveDate])
+}
+
+model PensionRule {
+  id                     String       @id @default(uuid())
+  companyId              Int
+  employeeRate           Decimal      @default(0.0700) @db.Decimal(5, 4)
+  employerRate           Decimal      @default(0.1100) @db.Decimal(5, 4)
+  basis                  PensionBasis @default(BASIC)
+  applyMaxCap            Boolean      @default(false)
+  maxCapAmount           Decimal?     @db.Decimal(15, 2)
+  mandatoryForForeigners Boolean      @default(false)
+  remittanceDeadlineDays Int          @default(30)
+  effectiveDate          DateTime
+  isActive               Boolean      @default(true)
+  createdAt              DateTime     @default(now())
+  updatedAt              DateTime     @updatedAt
+  company                Company      @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, basis, effectiveDate])
+  @@index([companyId, isActive])
+}
+
+model AllowanceConfig {
+  id           String      @id @default(uuid())
+  companyId    Int
+  earningType  String      @db.VarChar(100)
+  label        String
+  isTaxable    Boolean     @default(true)
+  isExempt     Boolean     @default(false)
+  exemptPercent Decimal?   @db.Decimal(5, 4)
+  isActive     Boolean     @default(true)
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  company      Company     @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, earningType])
+  @@index([companyId, isActive])
+}
+
+model CostSharingRule {
+  id            String       @id @default(uuid())
+  companyId     Int
+  rate          Decimal      @default(0.1000) @db.Decimal(5, 4)
+  basis         PensionBasis @default(BASIC)
+  effectiveDate DateTime
+  isActive      Boolean      @default(true)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  company       Company      @relation(fields: [companyId], references: [id])
+}
+
+model OvertimeRule {
+  id               String           @id @default(uuid())
+  companyId        Int
+  category         OvertimeCategory
+  rate             Decimal          @db.Decimal(5, 2)
+  calculationBase  PensionBasis     @default(BASIC)
+  isTaxable        Boolean          @default(true)
+  weeklyCapHours   Decimal          @default(12) @db.Decimal(5, 2)
+  monthlyCapHours  Decimal?         @db.Decimal(5, 2)
+  effectiveDate    DateTime
+  isActive         Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  company          Company          @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, category, effectiveDate])
+}
+
+model BonusRule {
+  id                  String                     @id @default(uuid())
+  companyId           Int
+  name                String
+  description         String?
+  cycle               BonusCycle
+  calculationType     BonusCalculationType
+  taxationType        TaxationType               @default(TAXABLE)
+  taxWaiverPercent    Decimal?                   @db.Decimal(5, 4)
+  effectiveDate       DateTime
+  expiryDate          DateTime?
+  isActive            Boolean                    @default(true)
+  createdAt           DateTime                   @default(now())
+  updatedAt           DateTime                   @updatedAt
+  eligibilityCriteria BonusEligibilityCriteria[]
+  bonusMappings       BonusMapping[]
+  company             Company                    @relation(fields: [companyId], references: [id])
+  payrollBonuses      PayrollBonus[]
+}
+
+model BonusEligibilityCriteria {
+  id          String               @id @default(uuid())
+  bonusRuleId String
+  parameter   EligibilityParameter
+  operator    String
+  value       String
+  logicGroup  LogicOperator        @default(AND)
+  groupOrder  Int                  @default(0)
+  createdAt   DateTime             @default(now())
+  bonusRule   BonusRule            @relation(fields: [bonusRuleId], references: [id])
+}
+
+model BonusMapping {
+  id                   String    @id @default(uuid())
+  bonusRuleId          String
+  conditionDescription String?
+  bonusAmount          Decimal?  @db.Decimal(15, 2)
+  bonusPercent         Decimal?  @db.Decimal(5, 4)
+  createdAt            DateTime  @default(now())
+  bonusRule            BonusRule @relation(fields: [bonusRuleId], references: [id])
+}
+
+model ActingAllowanceRule {
+  id                  String               @id @default(uuid())
+  companyId           Int
+  calculationMethod   CalculationMethod    @default(PERCENTAGE)
+  fixedAmount         Decimal?             @db.Decimal(15, 2)
+  minimumPeriodMonths Int                  @default(1)
+  maximumPeriodMonths Int                  @default(6)
+  basis               ActingAllowanceBasis @default(BASIC_DIFF)
+  payablePercent      Decimal              @default(1.0000) @db.Decimal(5, 4)
+  /// JSON array of `{ startMonth, endMonth, percent }` for multi-month percentage rules
+  tiers               Json?                @default("[]")
+  effectiveDate       DateTime
+  isActive            Boolean              @default(true)
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  company             Company              @relation(fields: [companyId], references: [id])
+  actingAssignments   ActingAssignment[]
+}
+
+model SalaryStructure {
+  id             String          @id @default(uuid())
+  companyId      Int
+  name           String
+  description    String?
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  deductionItems DeductionItem[]
+  earningsItems  EarningsItem[]
+  company        Company         @relation(fields: [companyId], references: [id])
+}
+
+model EarningsItem {
+  id                String          @id @default(uuid())
+  salaryStructureId String
+  earningType       EarningType
+  label             String
+  isTaxable         Boolean         @default(true)
+  isConfigurable    Boolean         @default(true)
+  defaultAmount     Decimal?        @db.Decimal(15, 2)
+  isActive          Boolean         @default(true)
+  createdAt         DateTime        @default(now())
+  salaryStructure   SalaryStructure @relation(fields: [salaryStructureId], references: [id])
+}
+
+model DeductionItem {
+  id                String                    @id @default(uuid())
+  salaryStructureId String
+  deductionType     DeductionType
+  label             String
+  isMandatory       Boolean                   @default(false)
+  isStatutory       Boolean                   @default(false)
+  isActive          Boolean                   @default(true)
+  createdAt         DateTime                  @default(now())
+  updatedAt         DateTime                  @updatedAt
+  amount            Decimal?                  @db.Decimal(15, 2)
+  calculationType   DeductionCalculationType?
+  calculationBasis  CalculationBasis?
+  percent           Decimal?                  @db.Decimal(6, 2)
+  salaryStructure   SalaryStructure           @relation(fields: [salaryStructureId], references: [id])
+
+  @@index([salaryStructureId, isActive])
+}
+
+model EmployeeDeduction {
+  id                String                   @id @default(uuid())
+  employeeId        String
+  deductionItemId   String?
+  deductionType     DeductionType
+  label             String
+  calculationType   DeductionCalculationType
+  amount            Decimal?                 @db.Decimal(15, 2)
+  percent           Decimal?                 @db.Decimal(6, 2)
+  status            EmployeeDeductionStatus  @default(ACTIVE)
+  startDate         DateTime?
+  endDate           DateTime?
+  effectivePeriodId String?
+  description       String?
+  refNo             String?
+  prorated          Boolean                  @default(false)
+  priority          Int                      @default(0)
+  isActive          Boolean                  @default(true)
+  companyId         Int
+  createdAt         DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  paymentPlan       DeductionPaymentPlan?
+  company           Company                  @relation(fields: [companyId], references: [id])
+  employee          Employee                 @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, status])
+  @@index([employeeId, isActive])
+  @@index([companyId, status])
+}
+
+model DeductionPaymentPlan {
+  id                  String            @id @default(uuid())
+  employeeDeductionId String            @unique
+  totalAmount         Decimal?          @db.Decimal(15, 2)
+  paidAmount          Decimal           @default(0) @db.Decimal(15, 2)
+  remaining           Decimal?          @db.Decimal(15, 2)
+  numInstallments     Int?
+  paidInstallments    Int               @default(0)
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  employeeDeduction   EmployeeDeduction @relation(fields: [employeeDeductionId], references: [id])
+}
+
+model Configuration {
+  id        String   @id @default(uuid())
+  companyId Int
+  key       String
+  value     String
+  updatedAt DateTime @updatedAt
+  updatedBy String?
+  company   Company  @relation(fields: [companyId], references: [id])
+
+  @@unique([companyId, key])
+}
+
+/// Rounding rule for currency decimal calculations.
+enum RoundingRule {
+  ROUND_HALF_UP
+  ROUND_HALF_DOWN
+  ROUND_HALF_EVEN
+  TRUNCATE
+}
+
+/// Source of an exchange rate.
+enum RateSource {
+  MANUAL
+  AUTO_FETCH
+}
+
+/// Managed system currency per company — replaces the hardcoded Currency enum.
+model SystemCurrency {
+  id            String       @id @default(uuid())
+  companyId     Int
+  code          String       // e.g. "ETB", "USD"
+  name          String       // e.g. "Ethiopian Birr", "US Dollar"
+  symbol        String       // e.g. "Br", "$"
+  decimalPlaces Int          @default(2)
+  roundingRule  RoundingRule @default(ROUND_HALF_UP)
+  isBase        Boolean      @default(false)
+  isActive      Boolean      @default(true)
+  autoFetchRate Boolean      @default(false)
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  company           Company        @relation(fields: [companyId], references: [id])
+  companyBaseFor    Company?       @relation("BaseCurrency")  // The company that uses this as base currency
+  ratesFrom         CurrencyRate[] @relation("CurrencyRateCurrency")
+  ratesTo           CurrencyRate[] @relation("CurrencyRateCurrencyTo")
+
+  @@unique([companyId, code])
+  @@index([companyId, isActive])
+}
+
+model CurrencyRate {
+  id             String      @id @default(uuid())
+  companyId      Int
+  fromCurrencyId String      // FK to SystemCurrency.id
+  toCurrencyId   String      // FK to SystemCurrency.id
+  rate           Decimal     @db.Decimal(15, 6)
+  source         RateSource  @default(MANUAL)
+  overrideReason String?
+  effectiveDate  DateTime
+  createdAt      DateTime    @default(now())
+
+  company       Company        @relation(fields: [companyId], references: [id])
+  fromCurrency  SystemCurrency @relation("CurrencyRateCurrency", fields: [fromCurrencyId], references: [id])
+  toCurrency    SystemCurrency @relation("CurrencyRateCurrencyTo", fields: [toCurrencyId], references: [id])
+
+  @@unique([companyId, fromCurrencyId, toCurrencyId, effectiveDate])
+  @@index([companyId, effectiveDate])
+}
+
+model PayslipNotificationSettings {
+  id               String          @id @default(uuid())
+  companyId        Int             @unique
+  emailNotifications Boolean       @default(true)
+  smsNotifications  Boolean         @default(false)
+  pushNotifications Boolean        @default(false)
+  inAppNotifications Boolean       @default(false)
+  digestFrequency   DigestFrequency @default(WEEKLY)
+  payslipFormat     PayslipFormat  @default(PDF)
+  emailTemplate     String?
+  deliveryTriggers String?         // JSON array of DeliveryTrigger values, e.g. ["PAYSLIP_GENERATED", "MONTHLY_DIGEST"]
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+  company           Company         @relation(fields: [companyId], references: [id])
+}
+
+model PayFrequency {
+  id                       String            @id @default(uuid())
+  companyId                Int
+  name                     String
+  frequency                PayrollCycle
+  periodsPerYear           Int
+  isActive                 Boolean           @default(true)
+
+  // Pay day rules
+  payDayRule               PayDayRule?
+  fixedPayDate             Int?              // e.g. 28 (day of month)
+  offsetDays               Int?              // e.g. 3 (days after period closes)
+  weekendRollover          WeekendRollover?
+  holidayRollover          WeekendRollover?
+
+  // Employee group assignment
+  applicableEmployeeGroup  String?
+  autoGeneratePeriods      Boolean           @default(true)
+
+  // Daily-pay specifics
+  dailyRateBasis           DailyRateBasis?
+  workingDaysPerYear       Int?
+  minimumPayableDays       Int?
+  overtimeEligible         Boolean           @default(true)
+
+  createdAt                DateTime          @default(now())
+  updatedAt                DateTime          @updatedAt
+  company                  Company           @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, isActive])
+}
+
+model FiscalYear {
+  id             String          @id @default(uuid())
+  companyId      Int
+  name           String
+  startDate      DateTime
+  endDate        DateTime
+  status         FiscalStatus    @default(DRAFT)
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  company        Company         @relation(fields: [companyId], references: [id])
+  payrollPeriods PayrollPeriod[]
+
+  @@index([companyId, isActive])
+}
+
+model PayrollPeriod {
+  id                String              @id @default(uuid())
+  companyId         Int
+  fiscalYearId      String?
+  name              String?
+  cycle             PayrollCycle
+  startDate         DateTime
+  endDate           DateTime
+  dateOfPayment     DateTime?
+  status            PayrollPeriodStatus @default(DRAFT)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  attendanceImports AttendanceImport[]
+  ercaSubmissions   ErcaSubmission[]
+  leaveDeductions   LeaveDeduction[]
+  leaveSyncLogs     LeaveSyncLog[]
+  okrSyncLogs       OkrSyncLog[]
+  payrollLeaveItems PayrollLeaveItem[]
+  batches           PayrollBatch[]
+  batchEmployees    PayrollBatchEmployee[]
+  company           Company             @relation(fields: [companyId], references: [id])
+  fiscalYear        FiscalYear?         @relation(fields: [fiscalYearId], references: [id])
+  payrollRuns       PayrollRun[]
+  reports           ReportExport[]
+  statutoryReports  StatutoryReport[]
+
+  @@unique([companyId, startDate, endDate, cycle])
+  @@index([companyId, status])
+}
+
+model PayrollRun {
+  id                  String             @id @default(uuid())
+  payrollPeriodId     String
+  payrollBatchId      String?
+  status              PayrollStatus      @default(DRAFT)
+  totalGross          Decimal            @default(0) @db.Decimal(15, 2)
+  totalNet            Decimal            @default(0) @db.Decimal(15, 2)
+  totalTax            Decimal            @default(0) @db.Decimal(15, 2)
+  totalPension        Decimal            @default(0) @db.Decimal(15, 2)
+  totalBonus          Decimal            @default(0) @db.Decimal(15, 2)
+  totalOvertime       Decimal            @default(0) @db.Decimal(15, 2)
+  totalCostToCompany  Decimal            @default(0) @db.Decimal(15, 2)
+  employeeCount       Int                @default(0)
+  monthlyWorkdays     Int                @default(30)
+  processedAt         DateTime?
+  finalizedAt         DateTime?
+  createdBy           Int
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  approvalRequests    ApprovalRequest[]
+  bankExportJobs      BankExportJob[]
+  manualAdjustments   ManualAdjustment[]
+  paymentFiles        PaymentFile[]
+  payrollPeriod       PayrollPeriod      @relation(fields: [payrollPeriodId], references: [id])
+  payrollBatch        PayrollBatch?      @relation(fields: [payrollBatchId], references: [id])
+  payrollRunItems     PayrollRunItem[]
+
+  @@index([payrollBatchId])
+}
+
+model PayrollRunItem {
+  id                      String                   @id @default(uuid())
+  payrollRunId            String
+  employeeId              String
+  workDays                Decimal                  @db.Decimal(5, 2)
+  basicSalary             Decimal                  @db.Decimal(15, 2)
+  proratedSalary          Decimal                  @db.Decimal(15, 2)
+  grossTaxableIncome      Decimal                  @db.Decimal(15, 2)
+  grossSalary             Decimal                  @db.Decimal(15, 2)
+  costToCompany           Decimal                  @default(0) @db.Decimal(15, 2)
+  totalDeductions         Decimal                  @db.Decimal(15, 2)
+  netSalary               Decimal                  @db.Decimal(15, 2)
+  currency                Currency                 @default(ETB)
+  isMidMonthHire          Boolean                  @default(false)
+  deductionCapBreached    Boolean                  @default(false)
+  createdAt               DateTime                 @default(now())
+  updatedAt               DateTime                 @updatedAt
+  payrollAllowances       PayrollAllowance[]
+  payrollBonuses          PayrollBonus[]
+  payrollDeductions       PayrollDeduction[]
+  payrollEarnings         PayrollEarning[]
+  payrollLeaveItems       PayrollLeaveItem[]
+  payrollOverrideRequests PayrollOverrideRequest[]
+  payrollOvertime         PayrollOvertime[]
+  payrollPension          PayrollPension?
+  payrollProration        PayrollProration?
+  employee                Employee                 @relation(fields: [employeeId], references: [id])
+  payrollRun              PayrollRun               @relation(fields: [payrollRunId], references: [id])
+  payrollTax              PayrollTax?
+  payslip                 Payslip?
+
+  @@unique([payrollRunId, employeeId])
+  @@index([payrollRunId])
+  @@index([employeeId])
+}
+
+model PayrollEarning {
+  id               String         @id @default(uuid())
+  payrollRunItemId String
+  earningType      EarningType
+  label            String
+  amount           Decimal        @db.Decimal(15, 2)
+  isTaxable        Boolean        @default(true)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  payrollRunItem   PayrollRunItem @relation(fields: [payrollRunItemId], references: [id])
+
+  @@index([payrollRunItemId])
+}
+
+model PayrollDeduction {
+  id               String         @id @default(uuid())
+  payrollRunItemId String
+  deductionType    DeductionType
+  label            String
+  amount           Decimal        @db.Decimal(15, 2)
+  isOverridden     Boolean        @default(false)
+  overrideReason   String?
+  overriddenBy     String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  payrollRunItem   PayrollRunItem @relation(fields: [payrollRunItemId], references: [id])
+
+  @@index([payrollRunItemId])
+}
+
+model PayrollTax {
+  id               String         @id @default(uuid())
+  payrollRunItemId String         @unique
+  taxBracketId     String?
+  appliedRate      Decimal        @db.Decimal(5, 4)
+  appliedDeduction Decimal        @db.Decimal(15, 2)
+  taxAmount        Decimal        @db.Decimal(15, 2)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  payrollRunItem   PayrollRunItem @relation(fields: [payrollRunItemId], references: [id])
+}
+
+model PayrollPension {
+  id                   String         @id @default(uuid())
+  payrollRunItemId     String         @unique
+  basis                PensionBasis
+  baseSalary           Decimal        @db.Decimal(15, 2)
+  employeeContribution Decimal        @db.Decimal(15, 2)
+  employerContribution Decimal        @db.Decimal(15, 2)
+  remittanceStatus     Boolean        @default(false)
+  remittedAt           DateTime?
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+  payrollRunItem       PayrollRunItem @relation(fields: [payrollRunItemId], references: [id])
+}
+
+model PayrollOvertime {
+  id               String           @id @default(uuid())
+  payrollRunItemId String
+  category         OvertimeCategory
+  hours            Decimal          @db.Decimal(5, 2)
+  rate             Decimal          @db.Decimal(5, 2)
+  hourlyRate       Decimal          @db.Decimal(15, 2)
+  amount           Decimal          @db.Decimal(15, 2)
+  isTaxable        Boolean          @default(true)
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+  payrollRunItem   PayrollRunItem   @relation(fields: [payrollRunItemId], references: [id])
+
+  @@index([payrollRunItemId])
+}
+
+model PayrollBonus {
+  id                   String         @id @default(uuid())
+  payrollRunItemId     String
+  bonusRuleId          String
+  grossBonus           Decimal        @db.Decimal(15, 2)
+  taxOnBonus           Decimal        @default(0) @db.Decimal(15, 2)
+  netBonus             Decimal        @db.Decimal(15, 2)
+  employerTaxLiability Decimal        @default(0) @db.Decimal(15, 2)
+  prorationMonths      Int?
+  taxationType         TaxationType
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+  bonusRule            BonusRule      @relation(fields: [bonusRuleId], references: [id])
+  payrollRunItem       PayrollRunItem @relation(fields: [payrollRunItemId], references: [id])
+
+  @@index([payrollRunItemId])
+}
+
+model PayrollAllowance {
+  id                 String            @id @default(uuid())
+  payrollRunItemId   String
+  actingAssignmentId String?
+  label              String
+  amount             Decimal           @db.Decimal(15, 2)
+  isTaxable          Boolean           @default(true)
+  isProrated         Boolean           @default(false)
+  proratedDays       Int?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  actingAssignment   ActingAssignment? @relation(fields: [actingAssignmentId], references: [id])
+  payrollRunItem     PayrollRunItem    @relation(fields: [payrollRunItemId], references: [id])
+
+  @@index([payrollRunItemId])
+}
+
+model PayrollProration {
+  id               String         @id @default(uuid())
+  payrollRunItemId String         @unique
+  hireDate         DateTime
+  periodStart      DateTime
+  periodEnd        DateTime
+  totalDays        Int
+  workedDays       Int
+  proratedFactor   Decimal        @db.Decimal(10, 6)
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  payrollRunItem   PayrollRunItem @relation(fields: [payrollRunItemId], references: [id])
+}
+
+model PayrollOverrideRequest {
+  id               String         @id @default(uuid())
+  payrollRunItemId String
+  reason           String
+  requestedBy      String
+  approvedBy       String?
+  approvedAt       DateTime?
+  status           ApprovalStatus @default(PENDING)
+  createdAt        DateTime       @default(now())
+  payrollRunItem   PayrollRunItem @relation(fields: [payrollRunItemId], references: [id])
+}
+
+model AttendanceImport {
+  id                String                     @id @default(uuid())
+  payrollPeriodId   String
+  source            AttendanceSource
+  importedBy        String
+  importedAt        DateTime                   @default(now())
+  status            ApprovalStatus             @default(PENDING)
+  isActive          Boolean                    @default(false)
+  processedAt       DateTime?                  // Set when used in a payroll run — prevents re-processing
+  fileReference     String?
+  recordCount       Int                        @default(0)
+  errorDetails      String?
+  periodLabel       String?
+  totalEmployees    Int                        @default(0)
+  totalRecords      Int                        @default(0)
+  exportData        String?
+  approvalRequests  ApprovalRequest[]
+  payrollPeriod            PayrollPeriod              @relation(fields: [payrollPeriodId], references: [id])
+  monthlySummaries         AttendanceMonthlySummary[]
+  attendanceRecords        AttendanceRecord[]
+  attendancePeriodSummaries AttendancePeriodSummary[]
+}
+
+model AttendanceNotification {
+  id                 String                     @id @default(uuid())
+  recipientId        Int
+  type               AttendanceNotificationType
+  title              String
+  message            String?
+  attendanceImportId String?
+  rejectionNote      String?
+  read               Boolean                    @default(false)
+  createdAt          DateTime                   @default(now())
+
+  @@index([recipientId, read])
+}
+
+model AttendanceRecord {
+  id                 String           @id @default(uuid())
+  attendanceImportId String
+  employeeId         String
+  date               DateTime         @db.Date
+  checkIn            DateTime?
+  checkOut           DateTime?
+  regularHours       Decimal          @default(0) @db.Decimal(5, 2)
+  lateMinutes        Int              @default(0)
+  isAbsent           Boolean          @default(false)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  attendanceImport   AttendanceImport @relation(fields: [attendanceImportId], references: [id])
+  employee           Employee         @relation(fields: [employeeId], references: [id])
+  overtimeRecords    OvertimeRecord[]
+
+  @@unique([attendanceImportId, employeeId, date])
+  @@index([employeeId, date])
+}
+
+model OvertimeRecord {
+  id                          String                     @id @default(uuid())
+  attendanceRecordId          String?
+  category                    OvertimeCategory
+  hours                       Decimal                    @db.Decimal(5, 2)
+  isManualEntry               Boolean                    @default(false)
+  approvedBy                  String?
+  createdAt                   DateTime                   @default(now())
+  updatedAt                   DateTime                   @updatedAt
+  attendanceRecord            AttendanceRecord?           @relation(fields: [attendanceRecordId], references: [id])
+  attendanceMonthlySummaryId  String?
+  attendanceMonthlySummary    AttendanceMonthlySummary?   @relation(fields: [attendanceMonthlySummaryId], references: [id])
+}
+
+model AttendanceMonthlySummary {
+  id                      String           @id @default(uuid())
+  attendanceImportId      String
+  employeeId              String
+  employeeName            String           @default("")
+  department              String           @default("")
+  regularHours            Decimal          @db.Decimal(7, 2)
+  lateMinutes             Int              @default(0)
+  earlyOutMinutes         Int              @default(0)
+  absenceHours            Decimal          @db.Decimal(7, 2)
+  normalOtHours           Decimal          @db.Decimal(7, 2)
+  weekendOtHours          Decimal          @db.Decimal(7, 2)
+  holidayOtHours          Decimal          @db.Decimal(7, 2)
+  ot1Hours                Decimal          @db.Decimal(7, 2)
+  annualLeaveHours        Decimal          @db.Decimal(7, 2)
+  sickLeaveHours          Decimal          @db.Decimal(7, 2)
+  casualLeaveHours        Decimal          @db.Decimal(7, 2)
+  maternityLeaveHours     Decimal          @db.Decimal(7, 2)
+  compassionateLeaveHours Decimal          @db.Decimal(7, 2)
+  businessTripHours       Decimal          @db.Decimal(7, 2)
+  compensatoryHours       Decimal          @db.Decimal(7, 2)
+  createdAt               DateTime         @default(now())
+  updatedAt               DateTime         @updatedAt
+  attendanceImport        AttendanceImport @relation(fields: [attendanceImportId], references: [id])
+  employee                Employee         @relation(fields: [employeeId], references: [id])
+  overtimeRecords         OvertimeRecord[]
+
+  @@unique([attendanceImportId, employeeId])
+  @@index([employeeId])
+}
+
+model AttendancePeriodSummary {
+  id                  String   @id @default(uuid())
+  attendanceImportId  String
+  employeeId          String
+
+  // Attendance data
+  regularHours        Decimal  @db.Decimal(7, 2)
+  paidLeaveHours      Decimal  @db.Decimal(7, 2)
+  absenceHours        Decimal? @db.Decimal(7, 2)
+  monthlyWorkHours    Decimal  @db.Decimal(7, 2)
+
+  // Computed totals
+  totalHours          Decimal  @db.Decimal(7, 2)
+  workingDays         Int?
+  absentDays          Int?
+  paidLeaveDays       Decimal? @db.Decimal(7, 2)
+  actualDays          Decimal? @db.Decimal(7, 2)
+
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  attendanceImport    AttendanceImport @relation(fields: [attendanceImportId], references: [id])
+  employee            Employee         @relation(fields: [employeeId], references: [id])
+
+  @@unique([attendanceImportId, employeeId])
+  @@index([employeeId])
+}
+
+model ActingAssignment {
+  id                    String                 @id @default(uuid())
+  employeeId            String
+  companyId             Int
+  actingPositionId      String
+  actingAllowanceRuleId String?
+  actingPositionSalary       Decimal                @db.Decimal(15, 2)
+  actingPositionBasicSalary  Decimal?               @db.Decimal(15, 2)
+  actingPositionGrossSalary  Decimal?               @db.Decimal(15, 2)
+  replacedEmployeeId    String?
+  startDate             DateTime
+  endDate               DateTime?
+  expectedEndDate       DateTime?
+  status                ActingAssignmentStatus @default(ACTIVE)
+  extensionApprovedBy   String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  actingAllowanceRule   ActingAllowanceRule?   @relation(fields: [actingAllowanceRuleId], references: [id])
+  actingPosition        Position               @relation("ActingPosition", fields: [actingPositionId], references: [id])
+  company               Company                @relation(fields: [companyId], references: [id])
+  employee              Employee               @relation("ActingEmployee", fields: [employeeId], references: [id])
+  replacedEmployee      Employee?              @relation("ReplacedEmployee", fields: [replacedEmployeeId], references: [id])
+  payrollAllowances     PayrollAllowance[]
+
+  @@index([employeeId, status])
+}
+
+model PayslipTemplate {
+  id           String    @id @default(uuid())
+  companyId    Int
+  name         String
+  companyLogo  String?
+  language     String    @default("en")
+  customFields Json?
+  isDefault    Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  payslips     Payslip[]
+  company      Company   @relation(fields: [companyId], references: [id])
+}
+
+model Payslip {
+  id               String           @id @default(uuid())
+  payrollRunItemId String           @unique
+  templateId       String?
+  generatedAt      DateTime         @default(now())
+  pdfPath          String?
+  emailSentAt      DateTime?
+  emailStatus      EmailStatus      @default(PENDING)
+  emailRetryCount  Int              @default(0)
+  payrollRunItem   PayrollRunItem   @relation(fields: [payrollRunItemId], references: [id])
+  template         PayslipTemplate? @relation(fields: [templateId], references: [id])
+}
+
+model LeaveDeduction {
+  id              String         @id @default(uuid())
+  employeeId      String
+  companyId       Int
+  payrollPeriodId String?
+  leaveType       String
+  leaveDays       Decimal        @db.Decimal(5, 2)
+  deductionAmount Decimal        @db.Decimal(15, 2)
+  externalLeaveId String?
+  syncedAt        DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  company         Company        @relation(fields: [companyId], references: [id])
+  employee        Employee       @relation(fields: [employeeId], references: [id])
+  payrollPeriod   PayrollPeriod? @relation(fields: [payrollPeriodId], references: [id])
+
+  @@unique([employeeId, payrollPeriodId, leaveType])
+}
+
+model LeaveBalance {
+  id               String    @id @default(uuid())
+  employeeId       String
+  companyId        Int
+  leaveType        String
+  fiscalYear       Int
+  totalEntitlement Decimal   @db.Decimal(5, 2)
+  usedDays         Decimal   @db.Decimal(5, 2)
+  pendingDays      Decimal   @db.Decimal(5, 2)
+  remainingDays    Decimal   @db.Decimal(5, 2)
+  expiryDate       DateTime?
+  externalId       String?
+  syncedAt         DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+  company          Company   @relation(fields: [companyId], references: [id])
+  employee         Employee  @relation(fields: [employeeId], references: [id])
+
+  @@unique([employeeId, leaveType, fiscalYear])
+  @@index([employeeId, fiscalYear])
+  @@index([companyId, fiscalYear])
+}
+
+model LeaveApplication {
+  id            String   @id @default(uuid())
+  employeeId    String
+  companyId     Int
+  leaveType     String
+  startDate     DateTime
+  endDate       DateTime
+  requestedDays Decimal  @db.Decimal(5, 2)
+  status        String   @default("APPROVED")
+  externalId    String?  @unique
+  syncedAt      DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  company       Company  @relation(fields: [companyId], references: [id])
+  employee      Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId])
+  @@index([companyId, status])
+  @@index([employeeId, startDate, endDate])
+}
+
+/// PayrollLeaveItem — Per-leave-type breakdown within a payroll run item.
+///
+/// Stores the period-accurate leave days (with half-day support) for each
+/// leave type per employee per payroll run.  This is populated by the
+/// LeavePeriodService which queries the external Employee Module DB
+/// directly using the period-accurate SQL pattern.
+///
+/// Unpaid leave days generate a deduction (dailyRate × leaveDays).
+/// Paid leave days are factored into taxable income calculations.
+model PayrollLeaveItem {
+  id                String         @id @default(uuid())
+  payrollRunItemId  String
+  employeeId        String
+  companyId         Int
+  payrollPeriodId   String?
+  leaveType         String
+  leaveCode         String?
+  leaveDaysInPeriod Decimal        @db.Decimal(7, 2)
+  isPaid            Boolean        @default(false)
+  deductionAmount   Decimal        @db.Decimal(15, 2)
+  syncedAt          DateTime       @default(now())
+  company           Company        @relation(fields: [companyId], references: [id])
+  employee          Employee       @relation(fields: [employeeId], references: [id])
+  payrollPeriod     PayrollPeriod? @relation(fields: [payrollPeriodId], references: [id])
+  payrollRunItem    PayrollRunItem @relation(fields: [payrollRunItemId], references: [id])
+
+  @@unique([payrollRunItemId, leaveType])
+  @@index([employeeId])
+  @@index([payrollRunItemId])
+}
+
+model ApprovalWorkflow {
+  id          String         @id @default(uuid())
+  companyId   Int
+  name        String
+  description String?
+  isActive    Boolean        @default(true)
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  steps       ApprovalStep[]
+  company     Company        @relation(fields: [companyId], references: [id])
+}
+
+model ApprovalStep {
+  id                 String            @id @default(uuid())
+  approvalWorkflowId String
+  stageType          ApprovalStageType
+  stepOrder          Int
+  requiredRoleId     Int
+  alternateRoleId    Int?
+  isRequired         Boolean           @default(true)
+  createdAt          DateTime          @default(now())
+  approvalWorkflow   ApprovalWorkflow  @relation(fields: [approvalWorkflowId], references: [id])
+  requiredRole       AppRole           @relation("RequiredRole", fields: [requiredRoleId], references: [id])
+  alternateRole      AppRole?          @relation("AlternateRole", fields: [alternateRoleId], references: [id])
+}
+
+model ApprovalRequest {
+  id                 String            @id @default(uuid())
+  stageType          ApprovalStageType
+  referenceType      ReferenceType
+  payrollRunId       String?
+  attendanceImportId String?
+  paymentFileId      String?
+  status             ApprovalStatus    @default(PENDING)
+  requestedBy        String
+  requestedAt        DateTime          @default(now())
+  resolvedAt         DateTime?
+  updatedAt          DateTime          @updatedAt
+  approvalActions    ApprovalAction[]
+  attendanceImport   AttendanceImport? @relation(fields: [attendanceImportId], references: [id])
+  paymentFile        PaymentFile?      @relation(fields: [paymentFileId], references: [id])
+  payrollRun         PayrollRun?       @relation(fields: [payrollRunId], references: [id])
+}
+
+model ApprovalAction {
+  id                String          @id @default(uuid())
+  approvalRequestId String
+  actorId           Int
+  action            ApprovalStatus
+  comment           String?
+  ipAddress         String?
+  actedAt           DateTime        @default(now())
+  actor             AppUser         @relation(fields: [actorId], references: [id])
+  approvalRequest   ApprovalRequest @relation(fields: [approvalRequestId], references: [id])
+}
+
+enum PayrollNotificationType {
+  PAYROLL_SUBMITTED
+  PAYROLL_APPROVED
+  PAYROLL_REJECTED
+}
+
+model PayrollNotification {
+  id            String                   @id @default(uuid())
+  recipientId   Int
+  type          PayrollNotificationType
+  title         String
+  message       String?
+  payrollRunId  String?
+  read          Boolean                  @default(false)
+  createdAt     DateTime                 @default(now())
+
+  @@index([recipientId, read])
+}
+
+model ManualAdjustment {
+  id             String         @id @default(uuid())
+  payrollRunId   String?
+  employeeId     String
+  companyId      Int
+  adjustmentType AdjustmentType
+  amount         Decimal        @db.Decimal(15, 2)
+  isTaxable      Boolean        @default(true)
+  reason         String
+  approvedBy     String?
+  approvedAt     DateTime?
+  createdBy      Int
+  createdAt      DateTime       @default(now())
+  company        Company        @relation(fields: [companyId], references: [id])
+  employee       Employee       @relation(fields: [employeeId], references: [id])
+  payrollRun     PayrollRun?    @relation(fields: [payrollRunId], references: [id])
+}
+
+model ExceptionLog {
+  id          String    @id @default(uuid())
+  context     String
+  referenceId String?
+  employeeId  String?
+  message     String
+  details     Json?
+  resolvedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  employee    Employee? @relation(fields: [employeeId], references: [id])
+}
+
+model ComplianceRule {
+  id               String            @id @default(uuid())
+  companyId        Int?
+  ruleCode         String            @unique
+  description      String
+  isActive         Boolean           @default(true)
+  createdAt        DateTime          @default(now())
+  complianceChecks ComplianceCheck[]
+  company          Company?          @relation(fields: [companyId], references: [id])
+}
+
+model ComplianceCheck {
+  id               String         @id @default(uuid())
+  complianceRuleId String
+  referenceId      String
+  referenceType    String
+  passed           Boolean
+  details          String?
+  checkedAt        DateTime       @default(now())
+  complianceRule   ComplianceRule @relation(fields: [complianceRuleId], references: [id])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     Int?
+  action     String
+  resource   String
+  resourceId String?
+  oldValue   Json?
+  newValue   Json?
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  @@index([resource, resourceId])
+  @@index([createdAt])
+}
+
+model Attachment {
+  id            String        @id @default(uuid())
+  referenceType String
+  referenceId   String
+  fileName      String
+  filePath      String
+  mimeType      String
+  sizeBytes     Int
+  uploadedBy    Int
+  uploadedAt    DateTime      @default(now())
+  folderId      String?
+  folder        ImportFolder? @relation(fields: [folderId], references: [id])
+}
+
+model BankAccount {
+  id            String   @id @default(uuid())
+  employeeId    String
+  companyId     Int
+  bankId        Int
+  accountNumber String
+  accountName   String
+  currency      Currency @default(ETB)
+  isPrimary     Boolean  @default(true)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  bank          Bank     @relation(fields: [bankId], references: [id])
+  company       Company  @relation(fields: [companyId], references: [id])
+  employee      Employee @relation(fields: [employeeId], references: [id])
+
+  @@index([employeeId, isPrimary])
+}
+
+model PaymentFile {
+  id               String            @id @default(uuid())
+  payrollRunId     String
+  bankId           Int
+  format           ExportFormat      @default(CSV)
+  filePath         String?
+  status           PaymentFileStatus @default(GENERATED)
+  exportedBy       String?
+  exportedAt       DateTime?
+  submittedAt      DateTime?
+  createdAt        DateTime          @default(now())
+  approvalRequests ApprovalRequest[]
+  bank             Bank              @relation(fields: [bankId], references: [id])
+  payrollRun       PayrollRun        @relation(fields: [payrollRunId], references: [id])
+}
+
+model ApiCredential {
+  id         String            @id @default(uuid())
+  system     IntegrationSystem
+  authType   String
+  baseUrl    String
+  credential String
+  isActive   Boolean           @default(true)
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+}
+
+model IntegrationLog {
+  id              String            @id @default(uuid())
+  system          IntegrationSystem
+  direction       SyncDirection
+  status          SyncStatus
+  recordsSynced   Int               @default(0)
+  errorDetails    String?
+  requestPayload  Json?
+  responsePayload Json?
+  startedAt       DateTime
+  completedAt     DateTime?
+  createdAt       DateTime          @default(now())
+
+  @@index([system, status])
+}
+
+model WebhookEvent {
+  id          String           @id @default(uuid())
+  source      String
+  eventType   String
+  payload     Json
+  processedAt DateTime?
+  status      ProcessingStatus @default(PENDING)
+  retryCount  Int              @default(0)
+  createdAt   DateTime         @default(now())
+
+  @@index([status, createdAt])
+}
+
+model ErcaSubmission {
+  id              String           @id @default(uuid())
+  payrollPeriodId String?
+  submittedBy     String?
+  filePath        String?
+  status          ProcessingStatus @default(PENDING)
+  submittedAt     DateTime?
+  responseDetails String?
+  createdAt       DateTime         @default(now())
+  payrollPeriod   PayrollPeriod?   @relation(fields: [payrollPeriodId], references: [id])
+}
+
+model BankExportJob {
+  id           String       @id @default(uuid())
+  bankId       Int
+  payrollRunId String
+  format       ExportFormat
+  filePath     String?
+  status       SyncStatus
+  errorDetails String?
+  exportedBy   String?
+  createdAt    DateTime     @default(now())
+  bank         Bank         @relation(fields: [bankId], references: [id])
+  payrollRun   PayrollRun   @relation(fields: [payrollRunId], references: [id])
+}
+
+model EmployeeSyncLog {
+  id         String     @id @default(uuid())
+  employeeId String
+  externalId String?
+  changeType String
+  payload    Json?
+  syncedAt   DateTime   @default(now())
+  status     SyncStatus
+  employee   Employee   @relation(fields: [employeeId], references: [id])
+}
+
+model LeaveSyncLog {
+  id              String         @id @default(uuid())
+  payrollPeriodId String?
+  employeeCount   Int            @default(0)
+  status          SyncStatus
+  errorDetails    String?
+  syncedAt        DateTime       @default(now())
+  payrollPeriod   PayrollPeriod? @relation(fields: [payrollPeriodId], references: [id])
+}
+
+model OkrSyncLog {
+  id              String         @id @default(uuid())
+  payrollPeriodId String?
+  employeeCount   Int            @default(0)
+  status          SyncStatus
+  errorDetails    String?
+  syncedAt        DateTime       @default(now())
+  payrollPeriod   PayrollPeriod? @relation(fields: [payrollPeriodId], references: [id])
+}
+
+model DataMigrationJob {
+  id               String           @id @default(uuid())
+  description      String
+  status           ProcessingStatus @default(PENDING)
+  totalRecords     Int              @default(0)
+  processedRecords Int              @default(0)
+  errorDetails     String?
+  startedAt        DateTime?
+  completedAt      DateTime?
+  createdAt        DateTime         @default(now())
+}
+
+model ReportTemplate {
+  id         String         @id @default(uuid())
+  companyId  Int
+  reportType ReportType
+  name       String
+  template   Json?
+  isDefault  Boolean        @default(false)
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+  reports    ReportExport[]
+  company    Company        @relation(fields: [companyId], references: [id])
+}
+
+model ReportExport {
+  id               String          @id @default(uuid())
+  reportTemplateId String?
+  payrollPeriodId  String?
+  reportType       ReportType
+  format           ExportFormat    @default(EXCEL)
+  filePath         String?
+  filters          Json?
+  generatedBy      Int
+  generatedAt      DateTime        @default(now())
+  payrollPeriod    PayrollPeriod?  @relation(fields: [payrollPeriodId], references: [id])
+  reportTemplate   ReportTemplate? @relation(fields: [reportTemplateId], references: [id])
+}
+
+model ArchiveBatch {
+  id           String      @id @default(uuid())
+  companyId    Int
+  archiveType  ArchiveType
+  periodLabel  String
+  recordCount  Int         @default(0)
+  storagePath  String?
+  archivedBy   String
+  archivedAt   DateTime    @default(now())
+  isSearchable Boolean     @default(true)
+  company      Company     @relation(fields: [companyId], references: [id])
+}
+
+model StatutoryReport {
+  id              String           @id @default(uuid())
+  companyId       Int
+  reportType      ReportType
+  payrollPeriodId String?
+  format          ExportFormat
+  filePath        String?
+  submittedAt     DateTime?
+  submittedBy     String?
+  status          ProcessingStatus @default(GENERATED)
+  createdAt       DateTime         @default(now())
+  company         Company          @relation(fields: [companyId], references: [id])
+  payrollPeriod   PayrollPeriod?   @relation(fields: [payrollPeriodId], references: [id])
+}
+
+model ImportFolder {
+  id          String         @id @default(uuid())
+  name        String
+  companyId   Int
+  parentId    String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+  attachments Attachment[]
+  parent      ImportFolder?  @relation("FolderChildren", fields: [parentId], references: [id])
+  children    ImportFolder[] @relation("FolderChildren")
+
+  @@index([companyId])
+  @@index([parentId])
+}
+
+enum Currency {
+  ETB
+  USD
+  GBP
+  EUR
+  AED
+}
+
+enum PayrollCycle {
+  MONTHLY
+  WEEKLY
+  DAILY
+  HOURLY
+}
+
+enum DigestFrequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+}
+
+enum PayDayRule {
+  FIXED_DATE
+  OFFSET_FROM_PERIOD_END
+}
+
+enum WeekendRollover {
+  PAY_FRIDAY_BEFORE
+  PAY_MONDAY_AFTER
+}
+
+enum DailyRateBasis {
+  ANNUAL_SALARY_DIVIDED_BY_WORKING_DAYS
+  FIXED_DAILY_RATE
+}
+
+enum PayslipFormat {
+  PDF
+  HTML
+}
+
+enum DeliveryTrigger {
+  PAYSLIP_GENERATED
+  PAYSLIP_VIEWED
+  PAYSLIP_APPROVED
+  PAYSLIP_REJECTED
+  MONTHLY_DIGEST
+}
+
+enum FiscalStatus {
+  DRAFT
+  ACTIVE
+  CLOSED
+}
+
+enum PayrollStatus {
+  DRAFT
+  PENDING_PAYROLL_APPROVAL
+  PENDING_PAYMENT_APPROVAL
+  APPROVED
+  DONE
+}
+
+enum PayrollPeriodStatus {
+  DRAFT
+  ACTIVE
+  DONE
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  OVERRIDDEN
+}
+
+enum AttendanceNotificationType {
+  ATTENDANCE_SUBMITTED
+  ATTENDANCE_APPROVED
+  ATTENDANCE_REJECTED
+}
+
+enum ApprovalStageType {
+  PAYROLL_BATCH
+  PAYROLL_DOCUMENT
+  PAYMENT_FILE
+  PAYROLL_APPROVAL
+  ATTENDANCE
+}
+
+enum TaxationType {
+  TAXABLE
+  NON_TAXABLE
+  PARTIALLY_TAXABLE
+}
+
+enum BonusCycle {
+  MONTHLY
+  QUARTERLY
+  ANNUAL
+}
+
+enum BonusCalculationType {
+  FIXED
+  PERCENTAGE_BASIC
+  PERCENTAGE_GROSS
+  RULE_BASED
+}
+
+enum EligibilityParameter {
+  PMS
+  WORK_UNIT
+  JOB_GRADE
+  JOB_ROLE
+  TENURE
+}
+
+enum LogicOperator {
+  AND
+  OR
+}
+
+enum OvertimeCategory {
+  WEEKDAY_DAY
+  WEEKDAY_NIGHT
+  WEEKEND
+  PUBLIC_HOLIDAY
+}
+
+enum AttendanceSource {
+  ZK_BIOMETRIC
+  MANUAL
+}
+
+enum PensionBasis {
+  BASIC
+  GROSS
+}
+
+enum CalculationMethod {
+  AMOUNT
+  PERCENTAGE
+}
+
+
+enum ActingAllowanceBasis {
+  BASIC_DIFF
+  GROSS_DIFF
+}
+
+enum IntegrationSystem {
+  EMPLOYEE_MODULE
+  LEAVE_MODULE
+  OKR_MODULE
+  ZK_BIOMETRIC
+  ERCA
+  ORACLE
+  BANK
+}
+
+enum SyncDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum SyncStatus {
+  SUCCESS
+  FAILED
+  PARTIAL
+}
+
+enum ReportType {
+  MOR_TAX
+  POESSA_PENSION
+  MOL_LABOUR
+  PAYROLL_PREVIEW
+  DEDUCTION_SUMMARY
+  OVERTIME_REPORT
+  BONUS_PAYOUT
+  PAYROLL_DETAIL
+}
+
+enum ExportFormat {
+  CSV
+  EXCEL
+  PDF
+  XML
+}
+
+enum NotificationChannel {
+  EMAIL
+  IN_APP
+  BOTH
+}
+
+enum UserStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+enum DeductionType {
+  EMPLOYMENT_INCOME_TAX
+  PENSION_EMPLOYEE
+  COST_SHARING
+  LOAN_REPAYMENT
+  ADVANCE_RECOVERY
+  UNPAID_LEAVE
+  LATENESS
+  COURT_ORDER
+  UNION_DUES
+  SAVINGS_AND_CREDIT
+  HEALTH_INSURANCE
+  LIFE_INSURANCE
+  FINE_PENALTY
+  OVERPAYMENT_RECOVERY
+  CHILD_SUPPORT
+  GARNISHMENT
+  OTHER
+}
+
+enum EmployeeDeductionStatus {
+  ACTIVE
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+enum CalculationBasis {
+  BASIC
+  GROSS
+}
+
+enum DeductionCalculationType {
+  FIXED_AMOUNT
+  PERCENTAGE_OF_BASIC
+  PERCENTAGE_OF_GROSS
+  REMAINING_BALANCE
+}
+
+enum EarningType {
+  BASIC_SALARY
+  RESPONSIBILITY_ALLOWANCE
+  HOUSING_ALLOWANCE
+  TELEPHONE_ALLOWANCE
+  MEAL_ALLOWANCE
+  HARDSHIP_ALLOWANCE
+  ACTING_ALLOWANCE
+  RELOCATION_ALLOWANCE
+  PD_ALLOWANCE
+  TRANSPORT_TAXABLE
+  TRANSPORT_NON_TAXABLE
+  OVERTIME
+  BONUS
+  INCENTIVE
+  GIFT
+  PROFIT_SHARING
+  OTHER
+}
+
+enum PaymentFileStatus {
+  GENERATED
+  APPROVED
+  EXPORTED
+  SUBMITTED
+}
+
+enum EmailStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum EmployeeStatus {
+  ACTIVE
+  INACTIVE
+  TERMINATED
+  ON_LEAVE
+  SUSPENDED
+}
+
+enum ActingAssignmentStatus {
+  ACTIVE
+  COMPLETED
+  CANCELLED
+  EXPIRED
+}
+
+enum ProcessingStatus {
+  PENDING
+  PROCESSING
+  GENERATED
+  COMPLETED
+  SUBMITTED
+  FAILED
+}
+
+enum AdjustmentType {
+  BONUS
+  PENALTY
+  CORRECTION
+  RETROACTIVE
+  OTHER
+}
+
+enum ReferenceType {
+  PAYROLL_RUN
+  ATTENDANCE_IMPORT
+  PAYMENT_FILE
+  EMPLOYEE
+  PAYROLL_PERIOD
+}
+
+enum ArchiveType {
+  PAYROLL
+  ATTENDANCE
+  TAX
+  PENSION
+  REPORT
+}
+
+enum AllowanceType {
+  TRANSPORTATION
+  TELEPHONE
+  REPRESENTATION
+  HOUSING
+  MEAL
+  OTHER
+}
+
+enum BatchStatus {
+  DRAFT
+  ACTIVE
+  CLOSED
+  ARCHIVED
+}
+
+model PayrollBatch {
+  id              String                 @id @default(uuid())
+  name            String
+  payrollPeriodId String
+  status          BatchStatus            @default(DRAFT)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  payrollPeriod   PayrollPeriod          @relation(fields: [payrollPeriodId], references: [id])
+  payrollRuns     PayrollRun[]
+  employees       PayrollBatchEmployee[]
+
+  @@index([payrollPeriodId])
+}
+
+model PayrollBatchEmployee {
+  id              String       @id @default(uuid())
+  employeeId      String
+  payrollBatchId  String
+  payrollPeriodId String
+
+  employee        Employee     @relation(fields: [employeeId], references: [id])
+  payrollBatch    PayrollBatch @relation(fields: [payrollBatchId], references: [id], onDelete: Cascade)
+  payrollPeriod   PayrollPeriod @relation(fields: [payrollPeriodId], references: [id])
+
+  @@index([payrollBatchId])
+  @@index([payrollPeriodId])
+  @@unique([employeeId, payrollPeriodId])
+}
