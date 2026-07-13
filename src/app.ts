@@ -14,14 +14,16 @@ import payrollNotificationRoutes from "./routes/payrollNotification.routes";
 // Prisma 7's Decimal.toJSON() returns a string (e.g. "8.50"), which causes
 // JavaScript string concatenation when added in the frontend.  Override
 // to return a plain number so all API responses use numeric Decimals.
-try {
-    // @ts-ignore
-    const { Decimal } = await import("@prisma/client/runtime/library.js");
-    // @ts-ignore – override Decimal.toJSON() to return number instead of string
-    Decimal.prototype.toJSON = function toJSON() { return Number(this); };
-} catch {
-    // Runtime not available — the override is a safety net, not critical.
-}
+void (async () => {
+    try {
+        // @ts-ignore
+        const { Decimal } = await import("@prisma/client/runtime/library.js");
+        // @ts-ignore – override Decimal.toJSON() to return number instead of string
+        Decimal.prototype.toJSON = function toJSON() { return Number(this); };
+    } catch {
+        // Runtime not available — the override is a safety net, not critical.
+    }
+})();
 
 // Express application instance — all middleware and routes are registered on this
 const app = express();

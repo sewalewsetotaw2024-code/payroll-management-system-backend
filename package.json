@@ -1,7 +1,7 @@
 {
-  "type": "module",
+  "type": "commonjs",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc && node scripts/postbuild.cjs",
     "dev": "nodemon",
     "start": "node dist/main.js",
     "prisma:generate": "prisma generate",
