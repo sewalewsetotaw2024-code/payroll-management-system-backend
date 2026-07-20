@@ -4,6 +4,7 @@
   },
   "scripts": {
     "build": "tsc",
+    "postbuild": "node ./scripts/postbuild.cjs",
     "dev": "nodemon",
     "start": "node dist/main.js",
     "prisma:generate": "prisma generate",
