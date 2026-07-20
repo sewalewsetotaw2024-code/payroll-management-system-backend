@@ -206,10 +206,10 @@ const result4b = calculateActingAllowance(
 assert(result4b.allowanceAmount.toNumber() === 0,
     "Zero diff: allowanceAmount = 0");
 
-// ─── Test 5: AMOUNT method with 6-month cap ─────────────────
+// ─── Test 5: FIXED_AMOUNT method with 6-month cap ─────────────────
 
 console.log("\n═══════════════════════════════════════════════════════");
-console.log("TEST 5: AMOUNT method with 6-month cap");
+console.log("TEST 5: FIXED_FIXED_AMOUNT method with 6-month cap");
 console.log("═══════════════════════════════════════════════════════\n");
 
 const fixedAmt = 15_000;
@@ -221,14 +221,14 @@ const result5a = calculateActingAllowance(
     EMPLOYEE_BASIC_SALARY,
     assignmentStart,
     new Date("2027-06-30"),
-    "AMOUNT",
+    "FIXED_AMOUNT",
     fixedAmt,
     false,
 );
 assert(result5a.allowanceAmount.toNumber() === fixedAmt,
-    `Month 6 AMOUNT: allowanceAmount = ${result5a.allowanceAmount.toNumber()} (expected ${fixedAmt})`);
+    `Month 6 FIXED_AMOUNT: allowanceAmount = ${result5a.allowanceAmount.toNumber()} (expected ${fixedAmt})`);
 assert(result5a.capApplied === false,
-    "Month 6 AMOUNT: capApplied = false");
+    "Month 6 FIXED_AMOUNT: capApplied = false");
 
 // Month 7 — should be capped
 const result5b = calculateActingAllowance(
@@ -237,14 +237,14 @@ const result5b = calculateActingAllowance(
     EMPLOYEE_BASIC_SALARY,
     assignmentStart,
     new Date("2027-07-31"),
-    "AMOUNT",
+    "FIXED_AMOUNT",
     fixedAmt,
     false,
 );
 assert(result5b.allowanceAmount.toNumber() === 0,
-    `Month 7 AMOUNT: allowanceAmount = ${result5b.allowanceAmount.toNumber()} (expected 0)`);
+    `Month 7 FIXED_AMOUNT: allowanceAmount = ${result5b.allowanceAmount.toNumber()} (expected 0)`);
 assert(result5b.capApplied === true,
-    "Month 7 AMOUNT: capApplied = true");
+    "Month 7 FIXED_AMOUNT: capApplied = true");
 
 // Month 7 extended — should pay
 const result5c = calculateActingAllowance(
@@ -253,14 +253,14 @@ const result5c = calculateActingAllowance(
     EMPLOYEE_BASIC_SALARY,
     assignmentStart,
     new Date("2027-07-31"),
-    "AMOUNT",
+    "FIXED_AMOUNT",
     fixedAmt,
     true,
 );
 assert(result5c.allowanceAmount.toNumber() === fixedAmt,
-    `Month 7 AMOUNT (extended): allowanceAmount = ${result5c.allowanceAmount.toNumber()} (expected ${fixedAmt})`);
+    `Month 7 FIXED_AMOUNT (extended): allowanceAmount = ${result5c.allowanceAmount.toNumber()} (expected ${fixedAmt})`);
 assert(result5c.capApplied === false,
-    "Month 7 AMOUNT (extended): capApplied = false");
+    "Month 7 FIXED_AMOUNT (extended): capApplied = false");
 
 // ─── Test 6: Month-by-month breakdown ────────────────────────
 

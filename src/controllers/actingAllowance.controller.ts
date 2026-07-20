@@ -6,9 +6,10 @@
  * preview endpoint.  All handlers are scoped to the authenticated
  * company via `resolveCompanyId(req)`.
  *
- * Supports two calculation methods on rules:
- *  - **AMOUNT**: A fixed amount for all months (no tier/percentage UI)
+ * Supports three calculation methods on rules:
  *  - **PERCENTAGE**: Tiered percentage brackets based on salary difference
+ *  - **FIXED_AMOUNT**: Fixed amount per assignment (computed from salary diff at assignment time)
+ *  - **RULE_FIXED_AMOUNT**: Fixed amount defined on the rule, same for all positions
  *
  * Key behaviours:
  *  - **Rules** use soft-delete (`isActive = false`) rather than hard delete.
@@ -69,7 +70,7 @@ function computeSalaryDiff(
 /**
  * Compute the current monthly allowance amount for display in the assignments table.
  *
- * For AMOUNT method: the fixed amount is stored as `actingPositionSalary`.
+ * For FIXED_AMOUNT/RULE_FIXED_AMOUNT method: the fixed amount is stored as `actingPositionSalary`.
  * For PERCENTAGE method: salaryDiff × matchedTier.percent / 100.
  */
 function computeMonthlyAllowance(
@@ -88,7 +89,9 @@ function computeMonthlyAllowance(
 ): number {
     if (!rule) return 0;
 
-    if (rule.calculationMethod === 'AMOUNT') {
+    if (rule.calculationMethod === 'FIXED_AMOUNT' || rule.calculationMethod === 'RULE_FIXED_AMOUNT') {
+        // FIXED_AMOUNT: amount stored on assignment as actingPositionSalary
+        // RULE_FIXED_AMOUNT: amount from rule.fixedAmount (stored in actingPositionSalary at creation)
         return Number(assignment.actingPositionSalary ?? 0);
     }
 
@@ -127,7 +130,7 @@ export const ActingAllowanceController = {
             fixedAmount: rule.fixedAmount ? Number(rule.fixedAmount) : null,
             payablePercent: Number(rule.payablePercent),
             // Provide tiers array for frontend that still expects it
-            tiers: rule.calculationMethod === "AMOUNT"
+            tiers: (rule.calculationMethod === "FIXED_AMOUNT" || rule.calculationMethod === "RULE_FIXED_AMOUNT")
                 ? []
                 : resolveTiers(rule),
         }));
@@ -152,9 +155,16 @@ export const ActingAllowanceController = {
             isActive: isActive ?? true,
         };
 
-        if (calculationMethod === "AMOUNT") {
+        if (calculationMethod === "FIXED_AMOUNT") {
+            // FIXED_AMOUNT: amount is per-assignment, set in modal. Rule just defines method.
+            data.fixedAmount = null;
+            data.payablePercent = new Prisma.Decimal(0);
+            data.minimumPeriodMonths = 1;
+            data.maximumPeriodMonths = 1;
+            data.tiers = [];
+        } else if (calculationMethod === "RULE_FIXED_AMOUNT") {
+            // RULE_FIXED_AMOUNT: amount is set on the rule, applies to all positions
             data.fixedAmount = fixedAmount != null ? new Prisma.Decimal(fixedAmount) : new Prisma.Decimal(0);
-            // Set flat fields to defaults (unused for AMOUNT)
             data.payablePercent = new Prisma.Decimal(0);
             data.minimumPeriodMonths = 1;
             data.maximumPeriodMonths = 1;
@@ -166,7 +176,7 @@ export const ActingAllowanceController = {
                 data.payablePercent = new Prisma.Decimal(primary.percent / 100);
                 data.minimumPeriodMonths = primary.startMonth;
                 data.maximumPeriodMonths = primary.endMonth;
-                data.tiers = tiers; // Store full tiers array
+                data.tiers = tiers;
             } else {
                 data.payablePercent = new Prisma.Decimal(payablePercent ?? 0);
                 data.minimumPeriodMonths = minimumPeriodMonths ?? 1;
@@ -183,7 +193,7 @@ export const ActingAllowanceController = {
                 ...rule,
                 fixedAmount: rule.fixedAmount ? Number(rule.fixedAmount) : null,
                 payablePercent: Number(rule.payablePercent),
-                tiers: rule.calculationMethod === "AMOUNT"
+                tiers: (rule.calculationMethod === "FIXED_AMOUNT" || rule.calculationMethod === "RULE_FIXED_AMOUNT")
                     ? []
                     : resolveTiers(rule),
             },
@@ -199,9 +209,6 @@ export const ActingAllowanceController = {
             tiers, payablePercent, minimumPeriodMonths, maximumPeriodMonths,
             effectiveDate, isActive,
         } = req.body;
-
-        console.log("[updateRule] body:", JSON.stringify(req.body));
-        console.log("[updateRule] effectiveDate raw:", effectiveDate, "type:", typeof effectiveDate);
 
         const existing = await prisma.actingAllowanceRule.findFirst({
             where: { id, companyId },
@@ -219,30 +226,35 @@ export const ActingAllowanceController = {
         if (effectiveDate !== undefined) data.effectiveDate = new Date(effectiveDate);
         if (isActive !== undefined) data.isActive = isActive;
 
-        // When calculationMethod is explicitly set to AMOUNT, clear percentage fields
-        if (calculationMethod === "AMOUNT") {
+        // When calculationMethod is explicitly set, clear unrelated fields
+        if (calculationMethod === "FIXED_AMOUNT") {
+            data.fixedAmount = null;
+            data.payablePercent = new Prisma.Decimal(0);
+            data.minimumPeriodMonths = 1;
+            data.maximumPeriodMonths = 1;
+            if (tiers !== undefined) data.tiers = [];
+        } else if (calculationMethod === "RULE_FIXED_AMOUNT") {
+            data.fixedAmount = fixedAmount !== undefined && fixedAmount !== null
+                ? new Prisma.Decimal(fixedAmount)
+                : new Prisma.Decimal(0);
             data.payablePercent = new Prisma.Decimal(0);
             data.minimumPeriodMonths = 1;
             data.maximumPeriodMonths = 1;
             if (tiers !== undefined) data.tiers = [];
         } else if (calculationMethod === "PERCENTAGE" || (!calculationMethod && existing.calculationMethod === "PERCENTAGE")) {
-            // PERCENTAGE — update tiers/ flat fields if provided
+            // PERCENTAGE — update tiers / flat fields if provided
             if (tiers && tiers.length > 0) {
                 const primary = tiers[0];
                 data.payablePercent = new Prisma.Decimal(primary.percent / 100);
                 data.minimumPeriodMonths = primary.startMonth;
                 data.maximumPeriodMonths = primary.endMonth;
-                data.tiers = tiers; // Store full tiers array
+                data.tiers = tiers;
             } else {
                 if (payablePercent !== undefined) data.payablePercent = new Prisma.Decimal(payablePercent);
                 if (minimumPeriodMonths !== undefined) data.minimumPeriodMonths = minimumPeriodMonths;
                 if (maximumPeriodMonths !== undefined) data.maximumPeriodMonths = maximumPeriodMonths;
             }
         }
-
-        console.log("[updateRule] data being written:", JSON.stringify(data, (_, v) =>
-            v instanceof Date ? v.toISOString() : v
-        ));
 
         const rule = await prisma.actingAllowanceRule.update({ where: { id }, data });
 
@@ -252,7 +264,7 @@ export const ActingAllowanceController = {
                 ...rule,
                 fixedAmount: rule.fixedAmount ? Number(rule.fixedAmount) : null,
                 payablePercent: Number(rule.payablePercent),
-                tiers: rule.calculationMethod === "AMOUNT"
+                tiers: (rule.calculationMethod === "FIXED_AMOUNT" || rule.calculationMethod === "RULE_FIXED_AMOUNT")
                     ? []
                     : resolveTiers(rule),
             },
@@ -334,7 +346,7 @@ export const ActingAllowanceController = {
                     ...rule,
                     fixedAmount: rule.fixedAmount ? Number(rule.fixedAmount) : null,
                     payablePercent: Number(rule.payablePercent),
-                    tiers: rule.calculationMethod === "AMOUNT"
+                    tiers: (rule.calculationMethod === "FIXED_AMOUNT" || rule.calculationMethod === "RULE_FIXED_AMOUNT")
                         ? []
                         : resolveTiers(rule),
                 } : null;
@@ -443,19 +455,29 @@ export const ActingAllowanceController = {
             throw new CustomError(httpStatus.NOT_FOUND, "Acting allowance rule not found");
         }
 
-        // For AMOUNT method: actingPositionSalary stores the per-assignment fixed amount.
+        // For FIXED_AMOUNT method: actingPositionSalary stores the per-assignment fixed amount.
+        // For RULE_FIXED_AMOUNT method: actingPositionSalary stores rule.fixedAmount.
         // For PERCENTAGE method: actingPositionSalary = actingPositionBasicSalary (backward compat).
-        const isAmountMethod = rule.calculationMethod === "AMOUNT";
-        const basicSal = isAmountMethod
-            ? new Prisma.Decimal(0)
-            : new Prisma.Decimal(autoFilledBasicSalary ?? 0);
-        const grossSal = isAmountMethod ? null
-            : (autoFilledGrossSalary !== undefined && autoFilledGrossSalary !== null
-                ? new Prisma.Decimal(autoFilledGrossSalary)
-                : null);
-        const sal = isAmountMethod
-            ? new Prisma.Decimal(fixedAmount ?? 0)
-            : new Prisma.Decimal(autoFilledBasicSalary ?? 0);
+        const isFixedMethod = rule.calculationMethod === "FIXED_AMOUNT";
+        const isRuleFixedMethod = rule.calculationMethod === "RULE_FIXED_AMOUNT";
+
+        let basicSal, grossSal, sal;
+        if (isFixedMethod) {
+            // FIXED_AMOUNT: amount comes from the assignment form (calculated from salary diff)
+            basicSal = new Prisma.Decimal(autoFilledBasicSalary ?? 0);
+            grossSal = null;
+            sal = new Prisma.Decimal(fixedAmount ?? 0);
+        } else if (isRuleFixedMethod) {
+            // RULE_FIXED_AMOUNT: amount comes from rule.fixedAmount
+            basicSal = new Prisma.Decimal(autoFilledBasicSalary ?? 0);
+            grossSal = null;
+            sal = rule.fixedAmount ?? new Prisma.Decimal(0);
+        } else {
+            // PERCENTAGE: actingPositionSalary = actingPositionBasicSalary (backward compat)
+            basicSal = new Prisma.Decimal(autoFilledBasicSalary ?? 0);
+            grossSal = autoFilledGrossSalary !== null ? new Prisma.Decimal(autoFilledGrossSalary ?? 0) : null;
+            sal = new Prisma.Decimal(autoFilledBasicSalary ?? 0);
+        }
 
         const assignment = await prisma.actingAssignment.create({
             data: {
@@ -503,7 +525,7 @@ export const ActingAllowanceController = {
             ...assignment.actingAllowanceRule,
             fixedAmount: assignment.actingAllowanceRule.fixedAmount ? Number(assignment.actingAllowanceRule.fixedAmount) : null,
             payablePercent: Number(assignment.actingAllowanceRule.payablePercent),
-            tiers: assignment.actingAllowanceRule.calculationMethod === "AMOUNT"
+            tiers: (assignment.actingAllowanceRule.calculationMethod === "FIXED_AMOUNT" || assignment.actingAllowanceRule.calculationMethod === "RULE_FIXED_AMOUNT")
                 ? []
                 : resolveTiers(assignment.actingAllowanceRule),
         } : null;
@@ -570,7 +592,7 @@ export const ActingAllowanceController = {
             ...assignment.actingAllowanceRule,
             fixedAmount: assignment.actingAllowanceRule.fixedAmount ? Number(assignment.actingAllowanceRule.fixedAmount) : null,
             payablePercent: Number(assignment.actingAllowanceRule.payablePercent),
-            tiers: assignment.actingAllowanceRule.calculationMethod === "AMOUNT"
+            tiers: (assignment.actingAllowanceRule.calculationMethod === "FIXED_AMOUNT" || assignment.actingAllowanceRule.calculationMethod === "RULE_FIXED_AMOUNT")
                 ? []
                 : resolveTiers(assignment.actingAllowanceRule),
         } : null;
@@ -624,7 +646,17 @@ export const ActingAllowanceController = {
                     // Only auto-fill if not manually overridden
                     if (actingPositionBasicSalary === undefined) {
                         data.actingPositionBasicSalary = new Prisma.Decimal(replacedEmp.compensation.basicSalary ?? 0);
-                        data.actingPositionSalary = new Prisma.Decimal(replacedEmp.compensation.basicSalary ?? 0);
+                        // Determine effective rule (new rule if changing, otherwise existing)
+                        const ruleId = actingAllowanceRuleId ?? existing.actingAllowanceRuleId;
+                        const rule = ruleId
+                            ? await prisma.actingAllowanceRule.findUnique({ where: { id: ruleId }, select: { calculationMethod: true, fixedAmount: true } })
+                            : null;
+                        if (rule?.calculationMethod === 'RULE_FIXED_AMOUNT') {
+                            // RULE_FIXED_AMOUNT: actingPositionSalary stores the rule's fixed amount
+                            data.actingPositionSalary = rule.fixedAmount ?? new Prisma.Decimal(0);
+                        } else {
+                            data.actingPositionSalary = new Prisma.Decimal(replacedEmp.compensation.basicSalary ?? 0);
+                        }
                     }
                     if (actingPositionGrossSalary === undefined) {
                         data.actingPositionGrossSalary = replacedEmp.compensation.grossSalary
@@ -639,7 +671,18 @@ export const ActingAllowanceController = {
         if (actingPositionBasicSalary !== undefined) {
             data.actingPositionBasicSalary = new Prisma.Decimal(actingPositionBasicSalary);
             if (fixedAmount === undefined) {
-                data.actingPositionSalary = new Prisma.Decimal(actingPositionBasicSalary);
+                // Determine effective rule (new rule if changing, otherwise existing)
+                const ruleId = actingAllowanceRuleId ?? existing.actingAllowanceRuleId;
+                const rule = ruleId
+                    ? await prisma.actingAllowanceRule.findUnique({ where: { id: ruleId }, select: { calculationMethod: true, fixedAmount: true } })
+                    : null;
+                if (rule?.calculationMethod === 'RULE_FIXED_AMOUNT') {
+                    // RULE_FIXED_AMOUNT: actingPositionSalary stores the rule's fixed amount
+                    data.actingPositionSalary = rule.fixedAmount ?? new Prisma.Decimal(0);
+                } else {
+                    // FIXED_AMOUNT / PERCENTAGE: actingPositionSalary = basic salary
+                    data.actingPositionSalary = new Prisma.Decimal(actingPositionBasicSalary);
+                }
             }
         }
         if (actingPositionGrossSalary !== undefined) {
@@ -692,7 +735,7 @@ export const ActingAllowanceController = {
             ...assignment.actingAllowanceRule,
             fixedAmount: assignment.actingAllowanceRule.fixedAmount ? Number(assignment.actingAllowanceRule.fixedAmount) : null,
             payablePercent: Number(assignment.actingAllowanceRule.payablePercent),
-            tiers: assignment.actingAllowanceRule.calculationMethod === "AMOUNT"
+            tiers: (assignment.actingAllowanceRule.calculationMethod === "FIXED_AMOUNT" || assignment.actingAllowanceRule.calculationMethod === "RULE_FIXED_AMOUNT")
                 ? []
                 : resolveTiers(assignment.actingAllowanceRule),
         } : null;
@@ -741,7 +784,7 @@ export const ActingAllowanceController = {
      * POST /api/v1/acting-assignments/preview — Preview allowance amount.
      *
      * Accepts `actingPositionBasicSalary` (and optional `actingPositionGrossSalary`).
-     * For AMOUNT rules, uses `fixedAmount` directly.
+     * For FIXED_AMOUNT/RULE_FIXED_AMOUNT rules, uses the appropriate fixed amount.
      * For PERCENTAGE rules, computes via salary difference + tier brackets.
      */
     /**
@@ -819,8 +862,10 @@ export const ActingAllowanceController = {
 
         const method = calculationMethod || rule.calculationMethod;
 
-        if (method === "AMOUNT") {
-            const amount = fixedAmount ?? (rule.fixedAmount ? Number(rule.fixedAmount) : 0);
+        if (method === "FIXED_AMOUNT" || method === "RULE_FIXED_AMOUNT") {
+            const amount = method === "RULE_FIXED_AMOUNT"
+                ? (rule.fixedAmount ? Number(rule.fixedAmount) : 0)
+                : (fixedAmount ?? 0);
             res.status(httpStatus.OK).json({
                 success: true,
                 data: {
@@ -834,7 +879,7 @@ export const ActingAllowanceController = {
             return;
         }
 
-        // PERCENTAGE method — respect the rule's basis (BASIC_DIFF vs GROSS_DIFF)
+        // PERCENTAGE method — respect the rule's basis
         const basis = rule.basis ?? "BASIC_DIFF";
         const empSalary = basis === "GROSS_DIFF"
             ? (employee.compensation?.grossSalary ?? 0)

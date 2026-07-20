@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Payslip - ADIU Communication Service Plc</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Inter', -apple-system, sans-serif;
+            background: #f0f0f0;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            min-height: 100vh;
+            padding: 40px 20px;
+        }
+
+        .payslip {
+            width: 100%;
+            max-width: 780px;
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 2px;
+        }
+
+        /* ===== HEADER ===== */
+        .header {
+            padding: 28px 36px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #1a8c3a;
+        }
+
+        .logo-img {
+            height: 46px;
+            width: auto;
+            object-fit: contain;
+        }
+
+        .header-right { text-align: right; }
+
+        .payslip-label {
+            font-size: 9px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            color: #999;
+        }
+
+        .payslip-title {
+            font-size: 22px;
+            font-weight: 700;
+            color: #1a1a1a;
+            letter-spacing: 1px;
+            text-transform: uppercase;
+        }
+
+        /* ===== INFO ===== */
+        .info-grid-wrapper {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            border-bottom: 1px solid #eee;
+        }
+
+        .info-col { padding: 20px 36px; }
+        .info-col:first-child { border-right: 1px solid #eee; }
+
+        .info-heading {
+            font-size: 9px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: #1a8c3a;
+            margin-bottom: 14px;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 5px 0;
+        }
+
+        .info-row .k { font-size: 12px; color: #888; }
+        .info-row .v { font-size: 12px; color: #1a1a1a; font-weight: 500; }
+
+        /* ===== TABLES ===== */
+        .tables {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            border-bottom: 1px solid #eee;
+        }
+
+        .tbl-col:first-child { border-right: 1px solid #eee; }
+
+        .tbl-title {
+            padding: 12px 36px;
+            font-size: 9px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 1.5px;
+            color: #1a8c3a;
+            background: #fafafa;
+            border-bottom: 1px solid #eee;
+        }
+
+        table { width: 100%; border-collapse: collapse; }
+
+        table th {
+            padding: 9px 36px;
+            font-size: 9px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            color: #aaa;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        table th:last-child { text-align: right; }
+
+        table td {
+            padding: 11px 36px;
+            font-size: 12.5px;
+            color: #444;
+            border-bottom: 1px solid #f5f5f5;
+        }
+
+        table td:last-child {
+            text-align: right;
+            font-weight: 500;
+            color: #1a1a1a;
+            font-variant-numeric: tabular-nums;
+        }
+
+        table tr:last-child td { border-bottom: none; }
+
+        table tr.total td {
+            border-top: 1.5px solid #1a1a1a;
+            border-bottom: none;
+            font-weight: 700;
+            color: #1a1a1a;
+            padding-top: 13px;
+        }
+
+        /* ===== NET PAY ===== */
+        .net-section {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 22px 36px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .net-label {
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #555;
+        }
+
+        .net-amount {
+            font-size: 24px;
+            font-weight: 700;
+            color: #1a1a1a;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .net-amount .cur {
+            font-size: 13px;
+            font-weight: 500;
+            color: #888;
+            margin-right: 4px;
+        }
+
+        /* ===== IN WORDS ===== */
+        .words {
+            padding: 14px 36px;
+            border-bottom: 1px solid #eee;
+            font-size: 11.5px;
+            color: #888;
+        }
+
+        .words strong { color: #555; font-weight: 600; }
+        .words em { font-style: italic; color: #666; }
+
+        /* ===== SIGNATURES ===== */
+        .sigs {
+            display: flex;
+            justify-content: space-between;
+            padding: 36px 36px 28px;
+        }
+
+        .sig { width: 180px; }
+
+        .sig-line {
+            border-bottom: 1px solid #ccc;
+            height: 44px;
+            margin-bottom: 8px;
+        }
+
+        .sig-text {
+            font-size: 9px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: #aaa;
+        }
+
+        /* ===== FOOTER ===== */
+        .footer {
+            padding: 16px 36px;
+            background: #fafafa;
+            border-top: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .footer-note { font-size: 10px; color: #bbb; }
+        .footer-note strong { color: #999; }
+
+        .adiu-brand { display: flex; align-items: baseline; gap: 6px; }
+
+        .adiu-brand-name {
+            font-size: 14px;
+            font-weight: 700;
+            color: #1a8c3a;
+            letter-spacing: 0.5px;
+        }
+
+        .adiu-brand-sub { font-size: 10px; color: #bbb; font-weight: 400; }
+
+        @media print {
+            body { background: #fff; padding: 0; }
+            .payslip { border: none; max-width: 100%; }
+        }
+
+        @media (max-width: 640px) {
+            body { padding: 8px; }
+            .header { flex-direction: column; gap: 14px; align-items: flex-start; padding: 20px; }
+            .header-right { text-align: left; }
+            .info-grid-wrapper, .tables { grid-template-columns: 1fr; }
+            .info-col:first-child { border-right: none; border-bottom: 1px solid #eee; }
+            .tbl-col:first-child { border-right: none; border-bottom: 1px solid #eee; }
+            table th, table td, .tbl-title, .info-col, .net-section, .words, .footer, .sigs { padding-left: 20px; padding-right: 20px; }
+            .sigs { flex-direction: column; gap: 20px; align-items: center; }
+            .footer { flex-direction: column; gap: 8px; text-align: center; }
+        }
+    </style>
+</head>
+<body>
+    <div class="payslip">
+        <!-- Header -->
+        <div class="header">
+            <img src="{{logoUrl}}" alt="{{companyName}} Logo" class="logo-img"
+                 onerror="this.style.display='none'">
+            <div class="header-right">
+                <div class="payslip-label">Pay Period: {{payPeriod}}</div>
+                <div class="payslip-title">Payslip</div>
+            </div>
+        </div>
+
+        <!-- Employee Info -->
+        <div class="info-grid-wrapper">
+            <div class="info-col">
+                <div class="info-heading">Employee Details</div>
+                <div class="info-row"><span class="k">Company Name</span><span class="v">{{companyName}}</span></div>
+                <div class="info-row"><span class="k">Employee Name</span><span class="v">{{employeeName}}</span></div>
+                <div class="info-row"><span class="k">Employee ID</span><span class="v">{{employeeId}}</span></div>
+                <div class="info-row"><span class="k">Designation</span><span class="v">{{designation}}</span></div>
+                <div class="info-row"><span class="k">Department</span><span class="v">{{department}}</span></div>
+                <div class="info-row"><span class="k">Date of Joining</span><span class="v">{{dateOfJoining}}</span></div>
+            </div>
+            <div class="info-col">
+                <div class="info-heading">Pay Details</div>
+                <div class="info-row"><span class="k">Pay Period</span><span class="v">{{payPeriodStart}} – {{payPeriodEnd}}</span></div>
+                <div class="info-row"><span class="k">Pay Date</span><span class="v">{{payDate}}</span></div>
+                <div class="info-row"><span class="k">Bank Name</span><span class="v">{{bankName}}</span></div>
+                <div class="info-row"><span class="k">Account No.</span><span class="v">{{maskAccount accountNo}}</span></div>
+                <div class="info-row"><span class="k">TIN</span><span class="v">{{tin}}</span></div>
+            </div>
+        </div>
+
+        <!-- Tables -->
+        <div class="tables">
+            <div class="tbl-col">
+                <div class="tbl-title">Earnings</div>
+                <table>
+                    <thead>
+                        <tr><th>Type</th><th>Amount (ETB)</th></tr>
+                    </thead>
+                    <tbody>
+                        {{#each earnings}}
+                        <tr><td>{{label}}</td><td>{{formatCurrency amount}}</td></tr>
+                        {{/each}}
+                        <tr class="total"><td>Total Earnings</td><td>{{formatCurrency totalEarnings}}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="tbl-col">
+                <div class="tbl-title">Deductions</div>
+                <table>
+                    <thead>
+                        <tr><th>Type</th><th>Amount (ETB)</th></tr>
+                    </thead>
+                    <tbody>
+                        {{#each deductions}}
+                        <tr><td>{{label}}</td><td>{{formatCurrency amount}}</td></tr>
+                        {{/each}}
+                        <tr class="total"><td>Total Deductions</td><td>{{formatCurrency totalDeductions}}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Net Pay -->
+        <div class="net-section">
+            <span class="net-label">Net Pay</span>
+            <span class="net-amount"><span class="cur">ETB</span>{{formatCurrency netPay}}</span>
+        </div>
+
+        <!-- In Words -->
+        <div class="words">
+            <strong>Amount in Words:</strong> <em>{{amountInWords}}</em>
+        </div>
+
+        <!-- Signatures -->
+        <div class="sigs">
+            <div class="sig">
+                <div class="sig-line"></div>
+                <div class="sig-text">Employee Signature</div>
+            </div>
+            <div class="sig">
+                <div class="sig-line"></div>
+                <div class="sig-text">Authorized Signatory</div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="footer">
+            <div class="footer-note"><strong>This is a system generated document.</strong> No physical signature is required.</div>
+            <div class="adiu-brand">
+                <span class="adiu-brand-name">ADIU</span>
+                <span class="adiu-brand-sub">Payroll</span>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

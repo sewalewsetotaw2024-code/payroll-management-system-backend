@@ -4,6 +4,7 @@ import config from "../config/env";
 import logger from "../utils/logger";
 import httpStatus from "http-status";
 import CustomError from "../utils/customError";
+import { monitoring } from "../utils/monitoring";
 
 // Converts non-CustomError errors (Prisma, Zod, etc.) into CustomError format
 export const errorConverter = (
@@ -98,5 +99,6 @@ export const errorHandler = (
 
     res.locals.errorMessage = message;
     if (config.nodeEnv === "development") logger.error(err);
+    monitoring.recordHttpRequest(req.method, req.path, statusCode);
     res.status(statusCode).send(response);
 };

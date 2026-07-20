@@ -204,6 +204,7 @@ export class EmployeeSyncService {
                 taxablePay: row.taxable_remuneration ?? null,
                 csBalance: row.cost_sharing_balance ?? null,
                 pensionNo: row.pension_number ?? null,
+                pensionElig: row.pension_eligible ?? true,
             };
 
             const departmentId = await resolveDeptId(row.department_name);

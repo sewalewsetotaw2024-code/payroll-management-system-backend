@@ -150,4 +150,24 @@ export const PayrollRunController = {
             data: item,
         });
     }),
+
+    /**
+     * Retrieves per-employee payroll statistics for a given payroll period.
+     *
+     * @param req - Express request object with payrollPeriodId in query.
+     * @param res - Express response object used to return employee stats array.
+     * @returns JSON response with success status and employee payroll stats.
+     */
+    getEmployeeStats: asyncHandler(async (req: Request, res: Response) => {
+        const companyId = resolveCompanyId(req);
+        const payrollPeriodId = req.query.payrollPeriodId as string;
+
+        const stats = await payrollRunService.getEmployeeStats(companyId, payrollPeriodId);
+
+        res.status(httpStatus.OK).json({
+            success: true,
+            message: "Employee payroll stats fetched successfully",
+            data: stats,
+        });
+    }),
 };

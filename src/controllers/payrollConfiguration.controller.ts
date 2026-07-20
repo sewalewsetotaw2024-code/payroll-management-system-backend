@@ -10,6 +10,7 @@ import {
     formatPaginatedResponse,
 } from "../utils/pagination";
 import { $Enums } from "../generated/prisma";
+import prisma from "../config/database";
 
 export const PayrollConfiguration = {
     // =========================================================================
@@ -1999,6 +2000,50 @@ export const PayrollConfiguration = {
         });
     }),
 
+    removeBatchEmployee: asyncHandler(async (req: Request, res: Response) => {
+        const companyId = resolveCompanyId(req as any);
+        const { id } = req.params;
+
+        await payrollConfigurationService.removeBatchEmployee(companyId, id);
+
+        await writeAudit(req, {
+            action: "DELETE",
+            resource: "PayrollBatchEmployee",
+            resourceId: id,
+            newValue: null,
+        });
+
+        res.status(httpStatus.OK).json({
+            success: true,
+            message: "Employee removed from batch successfully",
+        });
+    }),
+
+    moveBatchEmployee: asyncHandler(async (req: Request, res: Response) => {
+        const companyId = resolveCompanyId(req as any);
+        const { id } = req.params;
+        const { targetBatchId } = req.body;
+
+        if (!targetBatchId || typeof targetBatchId !== "string") {
+            throw new CustomError(httpStatus.BAD_REQUEST, "targetBatchId is required");
+        }
+
+        const updated = await payrollConfigurationService.moveBatchEmployee(companyId, id, targetBatchId);
+
+        await writeAudit(req, {
+            action: "UPDATE",
+            resource: "PayrollBatchEmployee",
+            resourceId: id,
+            newValue: updated,
+        });
+
+        res.status(httpStatus.OK).json({
+            success: true,
+            message: "Employee moved to target batch successfully",
+            data: updated,
+        });
+    }),
+
     // =========================================================================
     // PAYROLL BATCH - Name Update
     // =========================================================================
@@ -2590,6 +2635,53 @@ export const PayrollConfiguration = {
         });
 
         res.status(httpStatus.OK).json({ success: true, data: result });
+    }),
+
+    // =========================================================================
+    // DEDUCTION CAP
+    // =========================================================================
+
+    /**
+     * GET /configuration/deduction-cap — Retrieves the company-wide deduction cap percentage.
+     */
+    getDeductionCap: asyncHandler(async (req: Request, res: Response) => {
+        const companyId = resolveCompanyId(req as any);
+        const config = await prisma.configuration.findUnique({
+            where: { companyId_key: { companyId, key: 'DEDUCTION_CAP_PERCENTAGE' } },
+        });
+        const capPercentage = config ? parseFloat(config.value) : 33.33;
+        res.status(httpStatus.OK).json({ success: true, data: { capPercentage } });
+    }),
+
+    /**
+     * PUT /configuration/deduction-cap — Updates the company-wide deduction cap percentage.
+     */
+    updateDeductionCap: asyncHandler(async (req: Request, res: Response) => {
+        const companyId = resolveCompanyId(req as any);
+        const { value } = req.body;
+
+        if (value == null || typeof value !== 'number' || value < 0 || value > 100) {
+            throw new CustomError(httpStatus.BAD_REQUEST, "value must be a number between 0 and 100");
+        }
+
+        await prisma.configuration.upsert({
+            where: { companyId_key: { companyId, key: 'DEDUCTION_CAP_PERCENTAGE' } },
+            update: { value: value.toString() },
+            create: { companyId, key: 'DEDUCTION_CAP_PERCENTAGE', value: value.toString() },
+        });
+
+        await writeAudit(req, {
+            action: "UPDATE",
+            resource: "Configuration",
+            resourceId: `DEDUCTION_CAP_PERCENTAGE`,
+            newValue: { value },
+        });
+
+        res.status(httpStatus.OK).json({
+            success: true,
+            message: "Deduction cap updated successfully",
+            data: { capPercentage: value },
+        });
     }),
 
     // =========================================================================

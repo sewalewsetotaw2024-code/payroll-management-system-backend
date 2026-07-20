@@ -879,6 +879,8 @@ model AttendanceImport {
   isActive          Boolean                    @default(false)
   processedAt       DateTime?                  // Set when used in a payroll run — prevents re-processing
   fileReference     String?
+  fileHash          String?
+  sizeBytes         Int                        @default(0)     // Original file size in bytes
   recordCount       Int                        @default(0)
   errorDetails      String?
   periodLabel       String?
@@ -1031,6 +1033,7 @@ model PayslipTemplate {
   companyId    Int
   name         String
   companyLogo  String?
+  templateUrl  String?          // Cloudinary URL of the raw Handlebars HTML template
   language     String    @default("en")
   customFields Json?
   isDefault    Boolean   @default(false)
@@ -1049,6 +1052,13 @@ model Payslip {
   emailSentAt      DateTime?
   emailStatus      EmailStatus      @default(PENDING)
   emailRetryCount  Int              @default(0)
+
+  // Generation lifecycle tracking
+  generationStatus String                    @default("PENDING")
+  errorMessage     String?
+  retryCount       Int                       @default(0)
+  visibilityStatus PayslipVisibilityStatus   @default(DRAFT)
+
   payrollRunItem   PayrollRunItem   @relation(fields: [payrollRunItemId], references: [id])
   template         PayslipTemplate? @relation(fields: [templateId], references: [id])
 }
@@ -1146,10 +1156,11 @@ model PayrollLeaveItem {
 
 model ApprovalWorkflow {
   id          String         @id @default(uuid())
-  companyId   Int
-  name        String
-  description String?
-  isActive    Boolean        @default(true)
+  companyId     Int
+  name          String
+  description   String?
+  schemaVersion Int            @default(1)
+  isActive      Boolean        @default(true)
   createdAt   DateTime       @default(now())
   updatedAt   DateTime       @updatedAt
   steps       ApprovalStep[]
@@ -1168,6 +1179,8 @@ model ApprovalStep {
   approvalWorkflow   ApprovalWorkflow  @relation(fields: [approvalWorkflowId], references: [id])
   requiredRole       AppRole           @relation("RequiredRole", fields: [requiredRoleId], references: [id])
   alternateRole      AppRole?          @relation("AlternateRole", fields: [alternateRoleId], references: [id])
+
+  @@unique([approvalWorkflowId, stageType, stepOrder])
 }
 
 model ApprovalRequest {
@@ -1592,6 +1605,11 @@ enum ApprovalStatus {
   OVERRIDDEN
 }
 
+enum PayslipVisibilityStatus {
+  DRAFT
+  DONE
+}
+
 enum AttendanceNotificationType {
   ATTENDANCE_SUBMITTED
   ATTENDANCE_APPROVED
@@ -1656,8 +1674,9 @@ enum PensionBasis {
 }
 
 enum CalculationMethod {
-  AMOUNT
   PERCENTAGE
+  FIXED_AMOUNT
+  RULE_FIXED_AMOUNT
 }
 
 
@@ -1881,4 +1900,24 @@ model PayrollBatchEmployee {
   @@index([payrollBatchId])
   @@index([payrollPeriodId])
   @@unique([employeeId, payrollPeriodId])
+}
+
+/// Unified in-app notification model — replaces separate PayrollNotification
+/// and AttendanceNotification tables.  Stores all notification types
+/// (payroll, attendance, payslip, system) in one table with a generic
+/// referenceId for linking to the source entity.
+model AppNotification {
+  id          String   @id @default(uuid())
+  recipientId Int
+  type        String                       // e.g. PAYROLL_SUBMITTED, ATTENDANCE_APPROVED, PAYSLIP_GENERATED
+  title       String
+  message     String?
+  category    String   @default("general")  // payroll, attendance, payslip, system
+  read        Boolean  @default(false)
+  referenceId String?                      // generic FK — payrollRunId, attendanceImportId, etc.
+  link        String?                      // frontend deep-link (e.g. "/payroll", "/approval")
+  createdAt   DateTime @default(now())
+
+  @@index([recipientId, read])
+  @@index([recipientId, createdAt])
 }

@@ -1,6 +1,7 @@
 import prisma from "../config/database";
 import CustomError from "../utils/customError";
 import httpStatus from "http-status";
+import ExcelJS from "exceljs";
 
 /**
  * Service for managing employee records within a company.
@@ -190,6 +191,178 @@ export class EmployeeService {
             mealAllowance: findAmt('MEAL'),
             otherPayments: findAmt('OTHER'),
         };
+    }
+
+    async exportToExcel(
+        companyId: number,
+        options: { search?: string; status?: string } = {}
+    ): Promise<Buffer> {
+        const { search, status } = options;
+
+        const where: any = {
+            companyId,
+            ...(status && { status }),
+        };
+
+        if (search && search.trim()) {
+            where.OR = [
+                { firstName: { contains: search.trim(), mode: 'insensitive' as any } },
+                { lastName: { contains: search.trim(), mode: 'insensitive' as any } },
+                { email: { contains: search.trim(), mode: 'insensitive' as any } },
+                { jobPosition: { contains: search.trim(), mode: 'insensitive' as any } },
+                { department: { name: { contains: search.trim(), mode: 'insensitive' as any } } },
+            ];
+        }
+
+        const employees = await prisma.employee.findMany({
+            where,
+            orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+            select: {
+                id: true,
+                externalId: true,
+                firstName: true,
+                lastName: true,
+                email: true,
+                tinNumber: true,
+                jobPosition: true,
+                department: { select: { name: true } },
+                managerName: true,
+                hireDate: true,
+                status: true,
+                currency: true,
+                syncedAt: true,
+                profile: true,
+                compensation: {
+                    select: {
+                        basicSalary: true,
+                        grossSalary: true,
+                        taxablePay: true,
+                        csBalance: true,
+                        pensionElig: true,
+                        taxExempt: true,
+                        pensionNo: true,
+                    }
+                },
+                allowances: {
+                    where: { isActive: true },
+                    select: { allowanceType: true, amount: true }
+                },
+            },
+        });
+
+        // Flatten nested data
+        const findAmt = (type: string, allowances: { allowanceType: string; amount: any }[]) =>
+            allowances.find(a => a.allowanceType === type)?.amount ?? 0;
+
+        const rows = employees.map(emp => ({
+            employeeId: emp.externalId ?? '',
+            firstName: emp.firstName,
+            lastName: emp.lastName,
+            email: emp.email ?? '',
+            gender: (emp.profile as any)?.gender ?? '',
+            jobPosition: emp.jobPosition ?? '',
+            department: emp.department?.name ?? '',
+            managerName: emp.managerName ?? '',
+            employmentType: (emp.profile as any)?.employmentType ?? '',
+            hireDate: emp.hireDate ? new Date(emp.hireDate).toLocaleDateString() : '',
+            status: emp.status,
+            tinNumber: emp.tinNumber ?? '',
+            pensionNumber: emp.compensation?.pensionNo ?? '',
+            basicSalary: emp.compensation?.basicSalary ? Number(emp.compensation.basicSalary) : 0,
+            grossSalary: emp.compensation?.grossSalary ? Number(emp.compensation.grossSalary) : 0,
+            taxableRemuneration: emp.compensation?.taxablePay ? Number(emp.compensation.taxablePay) : 0,
+            transportAllowance: Number(findAmt('TRANSPORTATION', emp.allowances)),
+            housingAllowance: Number(findAmt('HOUSING', emp.allowances)),
+            mealAllowance: Number(findAmt('MEAL', emp.allowances)),
+            telephoneAllowance: Number(findAmt('TELEPHONE', emp.allowances)),
+            representationAllowance: Number(findAmt('REPRESENTATION', emp.allowances)),
+            otherPayments: Number(findAmt('OTHER', emp.allowances)),
+            costSharingBalance: emp.compensation?.csBalance ? Number(emp.compensation.csBalance) : 0,
+            pensionEligible: emp.compensation?.pensionElig ? 'Yes' : 'No',
+            taxExempt: emp.compensation?.taxExempt ? 'Yes' : 'No',
+            placeOfWork: (emp.profile as any)?.placeOfWork ?? '',
+            contractReference: (emp.profile as any)?.contractReference ?? '',
+        }));
+
+        const workbook = new ExcelJS.Workbook();
+        workbook.creator = 'Payroll System';
+        workbook.created = new Date();
+        const sheet = workbook.addWorksheet('Employees');
+
+        // Define columns
+        const columns: Partial<ExcelJS.Column>[] = [
+            { header: 'Employee ID', key: 'employeeId', width: 18 },
+            { header: 'First Name', key: 'firstName', width: 18 },
+            { header: 'Last Name', key: 'lastName', width: 18 },
+            { header: 'Email', key: 'email', width: 28 },
+            { header: 'Gender', key: 'gender', width: 10 },
+            { header: 'Job Position', key: 'jobPosition', width: 22 },
+            { header: 'Department', key: 'department', width: 18 },
+            { header: 'Manager', key: 'managerName', width: 20 },
+            { header: 'Employment Type', key: 'employmentType', width: 16 },
+            { header: 'Hire Date', key: 'hireDate', width: 14 },
+            { header: 'Status', key: 'status', width: 12 },
+            { header: 'TIN Number', key: 'tinNumber', width: 18 },
+            { header: 'Pension Number', key: 'pensionNumber', width: 18 },
+            { header: 'Basic Salary', key: 'basicSalary', width: 16 },
+            { header: 'Gross Salary', key: 'grossSalary', width: 16 },
+            { header: 'Taxable Remuneration', key: 'taxableRemuneration', width: 20 },
+            { header: 'Transport Allowance', key: 'transportAllowance', width: 18 },
+            { header: 'Housing Allowance', key: 'housingAllowance', width: 18 },
+            { header: 'Meal Allowance', key: 'mealAllowance', width: 16 },
+            { header: 'Telephone Allowance', key: 'telephoneAllowance', width: 18 },
+            { header: 'Representation Allowance', key: 'representationAllowance', width: 22 },
+            { header: 'Other Payments', key: 'otherPayments', width: 16 },
+            { header: 'Cost Sharing Balance', key: 'costSharingBalance', width: 20 },
+            { header: 'Pension Eligible', key: 'pensionEligible', width: 16 },
+            { header: 'Tax Exempt', key: 'taxExempt', width: 14 },
+            { header: 'Place of Work', key: 'placeOfWork', width: 20 },
+            { header: 'Contract Reference', key: 'contractReference', width: 20 },
+        ];
+
+        // Add data rows (or empty row with message)
+        if (rows.length === 0) {
+            sheet.addRow({});
+            const msgRow = sheet.addRow({ employeeId: 'No employees found matching the current filters.' });
+            msgRow.getCell(1).font = { italic: true, color: { argb: 'FF9CA3AF' } };
+        } else {
+            sheet.columns = columns;
+            sheet.addRows(rows);
+        }
+
+        // Style header row
+        const headerRow = sheet.getRow(1);
+        headerRow.height = 28;
+        headerRow.eachCell((cell) => {
+            cell.font = { bold: true, color: { argb: 'FFFFFFFF' }, size: 11 };
+            cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF047857' } };
+            cell.alignment = { vertical: 'middle', horizontal: 'center' };
+            cell.border = {
+                top: { style: 'thin', color: { argb: 'FF047857' } },
+                bottom: { style: 'thin', color: { argb: 'FF047857' } },
+            };
+        });
+
+        // Style data rows
+        if (rows.length > 0) {
+            sheet.eachRow((row, rowNum) => {
+                if (rowNum === 1) return; // skip header
+                row.eachCell((cell) => {
+                    cell.border = {
+                        top: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+                        bottom: { style: 'thin', color: { argb: 'FFE5E7EB' } },
+                    };
+                    cell.alignment = { vertical: 'middle' };
+                    // Alternating row background
+                    if (rowNum % 2 === 0) {
+                        cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF9FAFB' } };
+                    }
+                });
+            });
+        }
+
+        const buffer = await workbook.xlsx.writeBuffer();
+        return Buffer.from(buffer);
     }
 }
 

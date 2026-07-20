@@ -5,6 +5,10 @@ import CustomError from "../utils/customError";
 import { approvalWorkflowService } from "../services/approvalWorkflow.service";
 import { resolveCompanyId } from "../utils/roleGuard";
 import prisma from "../config/database";
+import {
+  validateApprovalRoleConfiguration,
+  auditWorkflowConfiguration,
+} from "../utils/approvalRoleValidator";
 
 export const ApprovalWorkflowController = {
   // ── Workflow Config ───────────────────────────────────────
@@ -240,6 +244,38 @@ export const ApprovalWorkflowController = {
     res.status(httpStatus.OK).json({
       success: true,
       data: request,
+    });
+  }),
+
+  /**
+   * GET /admin/approval-workflow/health
+   * Admin-only endpoint that validates approval role configuration and audits
+   * all active workflows for stuck migrations, zero-step states, or missing
+   * stage types.
+   */
+  getHealth: asyncHandler(async (_req: Request, res: Response) => {
+    const [roleValidation, workflowAudit] = await Promise.all([
+      validateApprovalRoleConfiguration(),
+      auditWorkflowConfiguration(),
+    ]);
+
+    const issues = workflowAudit.filter(
+      (wf) =>
+        wf.stepCount === 0 ||
+        wf.missingStageTypes.length > 0 ||
+        wf.stuckMigration,
+    );
+
+    const healthy = roleValidation.allFound && issues.length === 0;
+
+    res.status(healthy ? httpStatus.OK : httpStatus.OK).json({
+      success: true,
+      data: {
+        healthy,
+        roleValidation,
+        workflowAudit,
+        unhealthyWorkflows: issues,
+      },
     });
   }),
 };

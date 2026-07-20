@@ -9,9 +9,12 @@ import leaveRoutes from "./leave.routes";
 import actingAllowanceRoutes from "./actingAllowance.routes";
 import employeeRoutes from "./employee.routes";
 import approvalWorkflowRoutes from "./approvalWorkflow.routes";
-import attendanceNotificationRoutes from "./attendanceNotification.routes";
+import notificationRoutes from "./notification.routes";
 import rolesRoutes from "./roles.routes";
 import paymentExportRoutes from "./paymentExport.routes";
+import payslipTemplateRoutes from "./payslipTemplate.routes";
+import reportExportRoutes from "./reportExport.routes";
+import reportJobRoutes from "./reportJob.routes";
 
 const router = Router();
 
@@ -57,8 +60,11 @@ router.use("/employees", employeeRoutes);
  * Mounts approval workflow routes (workflow config, approval requests) under /approval.
  */
 router.use("/approval", approvalWorkflowRoutes);
-router.use("/", attendanceNotificationRoutes);
+router.use("/notifications", notificationRoutes);
 router.use("/roles", rolesRoutes);
 router.use("/", paymentExportRoutes);
+router.use("/", payslipTemplateRoutes);
+router.use("/", reportExportRoutes);
+router.use("/", reportJobRoutes);
 
 export default router;

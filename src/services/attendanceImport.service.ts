@@ -1,5 +1,7 @@
+import crypto from "node:crypto";
 import * as XLSX from "xlsx";
 import prisma from "../config/database";
+import cloudinary from "../config/cloudinary";
 import { $Enums } from "../generated/prisma";
 import CustomError from "../utils/customError";
 import httpStatus from "http-status";
@@ -224,6 +226,27 @@ export class AttendanceImportService {
             }
         }
 
+        // ── 3a. Compute file hash for duplicate detection ──────────────
+        const fileHash = crypto.createHash("sha256").update(file.buffer).digest("hex");
+
+        // Check if the same file was already imported for this payroll period
+        const existingWithHash = await prisma.attendanceImport.findFirst({
+            where: {
+                payrollPeriodId: payrollPeriod.id,
+                fileHash,
+            },
+            select: { id: true, periodLabel: true, importedAt: true },
+        });
+        if (existingWithHash) {
+            const importedDate = existingWithHash.importedAt.toLocaleDateString("en-US", {
+                month: "short", day: "numeric", year: "numeric",
+            });
+            throw new CustomError(
+                httpStatus.CONFLICT,
+                `This file has already been imported (${importedDate}) — duplicate detected.`,
+            );
+        }
+
         logger.info({ headerRowIndex, cardNumberColIndex }, "Import detection result");
 
         const headerRow = jsonRows[headerRowIndex];
@@ -376,7 +399,23 @@ export class AttendanceImportService {
             };
         }
 
-        // ── 5. Create AttendanceImport + records in transaction ────────
+        // ── 5. Upload raw file to Cloudinary (for later download) ──────
+        let cloudUrl = file.originalname;
+        try {
+            const base64 = file.buffer.toString("base64");
+            const dataUri = `data:${file.mimetype};base64,${base64}`;
+            const cloudResult = await cloudinary.uploader.upload(dataUri, {
+                folder: `company_${companyId}/imports/attendance`,
+                resource_type: "raw",
+                public_id: `${Date.now()}_${file.originalname.replace(/\.[^/.]+$/, "")}`,
+            });
+            cloudUrl = cloudResult.secure_url;
+        } catch (err) {
+            logger.warn({ err }, "Cloudinary upload failed — storing filename only");
+            // Non-fatal: fall back to storing just the original filename
+        }
+
+        // ── 6. Create AttendanceImport + records in transaction ────────
         const importRecord = await prisma.attendanceImport.create({
             data: {
                 payrollPeriodId: payrollPeriod.id,
@@ -385,7 +424,9 @@ export class AttendanceImportService {
                 periodLabel,
                 totalEmployees: parsed.length,
                 totalRecords: parsed.reduce((sum, p) => sum + p.dailyRecords.length, 0),
-                fileReference: file.originalname,
+                fileReference: cloudUrl,
+                fileHash,
+                sizeBytes: file.size,
                 isActive: true,
             },
         });

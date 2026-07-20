@@ -1,17 +1,21 @@
 import prisma from "../config/database";
 import CustomError from "../utils/customError";
 import httpStatus from "http-status";
-import { attendanceNotificationService } from "./attendanceNotification.service";
-import { payrollNotificationService } from "./payrollNotification.service";
+import logger from "../utils/logger";
+import { notificationService } from "./notification.service";
+import { payslipRenderService } from "./payslipRender.service";
 import { $Enums } from "../generated/prisma";
+import { REQUIRED_APPROVAL_ROLES, RoleNames } from "../utils/roleConstants";
 
 type ApprovalStatus = $Enums.ApprovalStatus;
 type PayrollStatus = $Enums.PayrollStatus;
 type ApprovalStageType = $Enums.ApprovalStageType;
+type ReferenceType = $Enums.ReferenceType;
 
 const ApprovalStatusConst = $Enums.ApprovalStatus;
 const PayrollStatusConst = $Enums.PayrollStatus;
 const ApprovalStageTypeConst = $Enums.ApprovalStageType;
+const ReferenceTypeConst = $Enums.ReferenceType;
 
 /**
  * ApprovalWorkflowService — Manages approval workflows, requests, and step resolution.
@@ -25,166 +29,304 @@ const ApprovalStageTypeConst = $Enums.ApprovalStageType;
  * 6. When all required steps are approved, transition PayrollRun to next status
  */
 export class ApprovalWorkflowService {
-  // ── Workflow helpers ──────────────────────────────────────
+  // ── Role helpers ──────────────────────────────────────────
 
   /**
-   * Ensure the company's active workflow includes a PAYROLL_DOCUMENT step.
-   * Called from approveRequest / rejectRequest so the backend is self-healing
-   * even if getWorkflowForCompany hasn't run the upgrade yet.
+   * Resolve a role by one of its known name aliases.
+   * Returns null if not found — does NOT create placeholder rows with hardcoded IDs.
    */
-  private async ensurePayrollDocStep(companyId: number): Promise<void> {
-    const workflow = await prisma.approvalWorkflow.findFirst({
-      where: { companyId, isActive: true },
-      include: { steps: true },
+  private async resolveRoleByName(names: string[]) {
+    return prisma.appRole.findFirst({
+      where: { name: { in: names } },
     });
-    if (!workflow) return; // no workflow yet — will be seeded elsewhere
-
-    const hasPayrollDoc = workflow.steps.some(
-      (s) => s.stageType === ApprovalStageTypeConst.PAYROLL_DOCUMENT,
-    );
-    if (hasPayrollDoc) return;
-
-    // Find or create the HR Manager role in the local AppRole table.
-    // The role may not exist yet if the sync from the employee management system
-    // hasn't run. We seed it here so the foreign key constraint is satisfied.
-    let hrManagerRole = await prisma.appRole.findFirst({
-      where: { name: { in: ["HR Manager", "HR_MANAGER", "hr_manager"] } },
-    });
-
-    if (!hrManagerRole) {
-      // Try to find "HR" role as a fallback for role name permissions
-      const hrRole = await prisma.appRole.findFirst({
-        where: { name: { in: ["HR", "hr", "HR Officer"] } },
-      });
-      // Use the HR role's name as display label but create the entry with ID 14
-      hrManagerRole = await prisma.appRole.upsert({
-        where: { id: 14 },
-        create: {
-          id: 14,
-          name: "HR Manager",
-          permissions: (hrRole?.permissions ?? null) as any,
-        },
-        update: {}, // already exists
-      });
-    }
-
-    const roleId = hrManagerRole.id; // guaranteed non-null after upsert
-
-    await prisma.approvalStep.create({
-      data: {
-        approvalWorkflowId: workflow.id,
-        stageType: ApprovalStageTypeConst.PAYROLL_DOCUMENT,
-        stepOrder: 0,
-        requiredRoleId: roleId,
-        isRequired: true,
-      },
-    });
-
-    console.log(`[ApprovalWorkflow] Added PAYROLL_DOCUMENT step to workflow ${workflow.id} (roleId=${roleId})`);
   }
 
-  private async ensureFinanceOfficerRole(): Promise<number> {
-    let financeOfficerRole = await prisma.appRole.findFirst({
-      where: { name: { in: ["Finance Officer", "finance_officer", "FINANCE_OFFICER"] } },
-    });
-
-    if (!financeOfficerRole) {
-      const adminRole = await prisma.appRole.findFirst({
-        where: { name: { in: ["Admin", "admin", "ADMIN"] } },
-      });
-      financeOfficerRole = await prisma.appRole.upsert({
-        where: { id: 15 },
-        create: {
-          id: 15,
-          name: "Finance Officer",
-          permissions: (adminRole?.permissions ?? null) as any,
-        },
-        update: {},
-      });
+  /**
+   * Resolve a role using a registry key from REQUIRED_APPROVAL_ROLES.
+   * Shorthand for resolveRoleByName(REQUIRED_APPROVAL_ROLES[key]).
+   */
+  private async resolveRegistryRole(key: string) {
+    const aliases = REQUIRED_APPROVAL_ROLES[key];
+    if (!aliases) {
+      logger.warn({ roleKey: key }, `[ApprovalWorkflow] Unknown approval role key "${key}" — no aliases registered.`);
+      return null;
     }
-
-    return financeOfficerRole.id;
+    return this.resolveRoleByName(aliases);
   }
 
-  private async ensurePayrollApprovalSteps(companyId: number): Promise<void> {
-    const workflow = await prisma.approvalWorkflow.findFirst({
-      where: { companyId, isActive: true },
-      include: { steps: { orderBy: { stepOrder: "asc" } } },
-    });
-    if (!workflow) return;
+  // ── Schema upgrade ──────────────────────────────────────────
 
-    // Always ensure Finance Officer role exists for alternateRoleId
-    await this.ensureFinanceOfficerRole();
-
-    // Always ensure Finance PAYROLL_APPROVAL steps have alternateRoleId set
-    // This runs regardless of step count (fixes bug: early return skipped this)
-    const financeSteps = await prisma.approvalStep.findMany({
-      where: {
-        approvalWorkflowId: workflow.id,
-        stageType: ApprovalStageTypeConst.PAYROLL_APPROVAL,
-        requiredRoleId: 16,
-        alternateRoleId: null,
-      },
-    });
-
-    for (const step of financeSteps) {
-      await prisma.approvalStep.update({
-        where: { id: step.id },
-        data: { alternateRoleId: 15 },
+  /**
+   * One-time workflow schema upgrade gated by `schemaVersion`.
+   *
+   * schemaVersion 1 → 2:
+   *   - Add PAYROLL_DOCUMENT step (HR Manager) if missing.
+   *   - Ensure PAYROLL_APPROVAL has both an HR Manager step (stepOrder 1)
+   *     and a Finance Manager step (stepOrder 2) with Finance Officer as alternate.
+   *   - Bump stepOrder on PAYMENT_FILE to 3.
+   *
+   * Runs inside a transaction so concurrent calls are safe, and is guarded
+   * by the schemaVersion field so it only ever executes ONCE per workflow.
+   */
+  private async upgradeWorkflowSchema(workflowId: string, companyId: number): Promise<void> {
+    await prisma.$transaction(async (tx) => {
+      // Re-read inside transaction with a FOR UPDATE equivalent (select then recheck)
+      const wf = await tx.approvalWorkflow.findUnique({
+        where: { id: workflowId },
+        include: { steps: { orderBy: { stepOrder: "asc" } } },
       });
-      console.log(`[ApprovalWorkflow] Set alternateRoleId=15 on step ${step.id}`);
-    }
+      if (!wf || wf.schemaVersion >= 2) return; // Already upgraded or missing
 
-    const payrollApprovalSteps = workflow.steps.filter(
-      (s) => s.stageType === ApprovalStageTypeConst.PAYROLL_APPROVAL,
-    );
+      // Resolve roles by name — no hardcoded IDs
+      const hrManagerRole = await this.resolveRoleByName(
+        REQUIRED_APPROVAL_ROLES.HR_MANAGER,
+      );
+      const financeManagerRole = await this.resolveRoleByName(
+        REQUIRED_APPROVAL_ROLES.FINANCE_MANAGER,
+      );
+      const financeOfficerRole = await this.resolveRoleByName(
+        REQUIRED_APPROVAL_ROLES.FINANCE_OFFICER,
+      );
 
-    if (payrollApprovalSteps.length >= 2) return;
+      if (!hrManagerRole || !financeManagerRole) {
+        logger.error(
+          {
+            errorCode: "APPROVAL_ROLE_MISSING",
+            workflowId,
+            companyId,
+            missingRoles: [
+              ...(!hrManagerRole ? ["HR_MANAGER"] : []),
+              ...(!financeManagerRole ? ["FINANCE_MANAGER"] : []),
+            ],
+          },
+          "[APPROVAL_ROLE_MISSING] Cannot upgrade workflow (v1→v2): required roles not found in AppRole table. Skipping upgrade.",
+        );
+        return;
+      }
 
-    let hrManagerRole = await prisma.appRole.findFirst({
-      where: { name: { in: ["HR Manager", "HR_MANAGER", "hr_manager"] } },
-    });
-    if (!hrManagerRole) {
-      const hrRole = await prisma.appRole.findFirst({
-        where: { name: { in: ["HR", "hr", "HR Officer"] } },
+      // ── Ensure PAYROLL_DOCUMENT step ──
+      const hasPayrollDoc = wf.steps.some(
+        (s) => s.stageType === ApprovalStageTypeConst.PAYROLL_DOCUMENT,
+      );
+      if (!hasPayrollDoc) {
+        await tx.approvalStep.create({
+          data: {
+            approvalWorkflowId: wf.id,
+            stageType: ApprovalStageTypeConst.PAYROLL_DOCUMENT,
+            stepOrder: 0,
+            requiredRoleId: hrManagerRole.id,
+            isRequired: true,
+          },
+        });
+        logger.info({ workflowId }, "[ApprovalWorkflow] Added PAYROLL_DOCUMENT step (HR Manager)");
+      }
+
+      // ── Ensure two PAYROLL_APPROVAL steps ──
+      const payrollApprovalSteps = wf.steps.filter(
+        (s) => s.stageType === ApprovalStageTypeConst.PAYROLL_APPROVAL,
+      );
+
+      if (payrollApprovalSteps.length === 0) {
+        await tx.approvalStep.create({
+          data: {
+            approvalWorkflowId: wf.id,
+            stageType: ApprovalStageTypeConst.PAYROLL_APPROVAL,
+            stepOrder: 1,
+            requiredRoleId: hrManagerRole.id,
+            isRequired: true,
+          },
+        });
+        await tx.approvalStep.create({
+          data: {
+            approvalWorkflowId: wf.id,
+            stageType: ApprovalStageTypeConst.PAYROLL_APPROVAL,
+            stepOrder: 2,
+            requiredRoleId: financeManagerRole.id,
+            alternateRoleId: financeOfficerRole?.id ?? null,
+            isRequired: true,
+          },
+        });
+        logger.info({ workflowId }, "[ApprovalWorkflow] Added HR Manager + Finance Manager PAYROLL_APPROVAL steps");
+      } else if (payrollApprovalSteps.length === 1) {
+        // Shift existing Finance step to stepOrder 2
+        await tx.approvalStep.update({
+          where: { id: payrollApprovalSteps[0].id },
+          data: { stepOrder: 2 },
+        });
+        // Insert HR Manager at stepOrder 1
+        await tx.approvalStep.create({
+          data: {
+            approvalWorkflowId: wf.id,
+            stageType: ApprovalStageTypeConst.PAYROLL_APPROVAL,
+            stepOrder: 1,
+            requiredRoleId: hrManagerRole.id,
+            isRequired: true,
+          },
+        });
+        logger.info({ workflowId }, "[ApprovalWorkflow] Inserted HR Manager PAYROLL_APPROVAL step at order 1");
+      }
+
+      // ── Ensure Finance PAYROLL_APPROVAL steps have alternateRoleId set ──
+      if (financeOfficerRole) {
+        await tx.approvalStep.updateMany({
+          where: {
+            approvalWorkflowId: wf.id,
+            stageType: ApprovalStageTypeConst.PAYROLL_APPROVAL,
+            requiredRoleId: financeManagerRole.id,
+            alternateRoleId: null,
+          },
+          data: { alternateRoleId: financeOfficerRole.id },
+        });
+      }
+
+      // ── Normalize step orders ──
+      await tx.approvalStep.updateMany({
+        where: { approvalWorkflowId: wf.id, stageType: ApprovalStageTypeConst.PAYROLL_DOCUMENT },
+        data: { stepOrder: 0 },
       });
-      hrManagerRole = await prisma.appRole.upsert({
-        where: { id: 14 },
-        create: { id: 14, name: "HR Manager", permissions: (hrRole?.permissions ?? null) as any },
-        update: {},
-      });
-    }
-
-    if (payrollApprovalSteps.length === 1) {
-      const existingStep = payrollApprovalSteps[0];
-
-      await prisma.approvalStep.update({
-        where: { id: existingStep.id },
-        data: { stepOrder: 2 },
-      });
-
-      await prisma.approvalStep.updateMany({
-        where: { approvalWorkflowId: workflow.id, stageType: ApprovalStageTypeConst.PAYMENT_FILE },
+      await tx.approvalStep.updateMany({
+        where: { approvalWorkflowId: wf.id, stageType: ApprovalStageTypeConst.PAYMENT_FILE },
         data: { stepOrder: 3 },
       });
 
-      await prisma.approvalStep.updateMany({
-        where: { approvalWorkflowId: workflow.id, stageType: ApprovalStageTypeConst.PAYROLL_DOCUMENT },
-        data: { stepOrder: 0 },
+      // ── Bump schemaVersion to prevent re-running ──
+      await tx.approvalWorkflow.update({
+        where: { id: wf.id },
+        data: { schemaVersion: 2 },
       });
 
-      await prisma.approvalStep.create({
-        data: {
-          approvalWorkflowId: workflow.id,
+      logger.info({ workflowId, companyId }, "[ApprovalWorkflow] Workflow schema upgraded to v2");
+    });
+  }
+
+  /**
+   * schemaVersion 2 → 3:
+   *   - Replace HR Manager steps with HR CS Manager steps
+   *   - Replace HR Officer / HR steps with HR Generalist / HR CS Manager steps (if any)
+   *   - Add ATTENDANCE stage type steps (HR CS Manager → HR CS Director)
+   *   - Update PAYMENT_FILE to use Finance Officer → Finance Manager flow
+   *   - Bump schemaVersion to 3
+   */
+  private async upgradeWorkflowSchemaV3(workflowId: string, companyId: number): Promise<void> {
+    await prisma.$transaction(async (tx) => {
+      const wf = await tx.approvalWorkflow.findUnique({
+        where: { id: workflowId },
+        include: { steps: { orderBy: { stepOrder: "asc" } } },
+      });
+      if (!wf || wf.schemaVersion >= 3) return;
+
+      // Resolve new roles — aliases from central registry (kept inline in
+      // transaction so role lookups stay inside the same tx context).
+      const hrCsManagerRole = await tx.appRole.findFirst({
+        where: { name: { in: REQUIRED_APPROVAL_ROLES.HR_CS_MANAGER } },
+      });
+      const hrGeneralistRole = await tx.appRole.findFirst({
+        where: { name: { in: REQUIRED_APPROVAL_ROLES.HR_GENERALIST } },
+      });
+      const hrCsDirectorRole = await tx.appRole.findFirst({
+        where: { name: { in: REQUIRED_APPROVAL_ROLES.HR_CS_DIRECTOR } },
+      });
+      const financeManagerRole = await tx.appRole.findFirst({
+        where: { name: { in: REQUIRED_APPROVAL_ROLES.FINANCE_MANAGER } },
+      });
+      const financeOfficerRole = await tx.appRole.findFirst({
+        where: { name: { in: REQUIRED_APPROVAL_ROLES.FINANCE_OFFICER } },
+      });
+
+      if (!hrCsManagerRole) {
+        logger.error(
+          {
+            errorCode: "APPROVAL_ROLE_MISSING",
+            workflowId,
+            roleKey: "HR_CS_MANAGER",
+            aliases: REQUIRED_APPROVAL_ROLES.HR_CS_MANAGER,
+          },
+          "[APPROVAL_ROLE_MISSING] Cannot upgrade to v3: HR_CS_MANAGER role not found in AppRole.",
+        );
+        return;
+      }
+
+      // 1. Update existing PAYROLL_APPROVAL steps: replace HR Manager role → HR CS Manager
+      // (skip the step that belongs to Finance Manager)
+      await tx.approvalStep.updateMany({
+        where: {
+          approvalWorkflowId: wf.id,
           stageType: ApprovalStageTypeConst.PAYROLL_APPROVAL,
-          stepOrder: 1,
-          requiredRoleId: hrManagerRole.id,
-          isRequired: true,
+          requiredRoleId: { not: financeManagerRole?.id ?? 0 },
         },
+        data: { requiredRoleId: hrCsManagerRole.id },
       });
 
-      console.log(`[ApprovalWorkflow] Added HR Manager PAYROLL_APPROVAL step to workflow ${workflow.id}`);
-    }
+      // Also update PAYROLL_DOCUMENT steps (used for attendance in old schema)
+      await tx.approvalStep.updateMany({
+        where: {
+          approvalWorkflowId: wf.id,
+          stageType: ApprovalStageTypeConst.PAYROLL_DOCUMENT,
+        },
+        data: { requiredRoleId: hrCsManagerRole.id },
+      });
+
+      // 2. Add ATTENDANCE stage steps (HR CS Manager step 1 → HR CS Director step 2)
+      const existingAttendanceSteps = wf.steps.filter(
+        (s) => s.stageType === ApprovalStageTypeConst.ATTENDANCE,
+      );
+      if (existingAttendanceSteps.length === 0) {
+        const stepsToCreate = [
+          {
+            approvalWorkflowId: wf.id,
+            stageType: ApprovalStageTypeConst.ATTENDANCE,
+            stepOrder: 1,
+            requiredRoleId: hrCsManagerRole.id,
+            isRequired: true,
+          }
+        ];
+        if (hrCsDirectorRole) {
+          stepsToCreate.push({
+            approvalWorkflowId: wf.id,
+            stageType: ApprovalStageTypeConst.ATTENDANCE,
+            stepOrder: 2,
+            requiredRoleId: hrCsDirectorRole.id,
+            isRequired: true,
+          });
+        }
+        await tx.approvalStep.createMany({
+          data: stepsToCreate,
+        });
+      }
+
+      // 3. Update PAYMENT_FILE to use Finance Officer (step 1) → Finance Manager (step 2)
+      const paymentSteps = wf.steps.filter(
+        (s) => s.stageType === ApprovalStageTypeConst.PAYMENT_FILE,
+      );
+      if (paymentSteps.length === 0 && financeOfficerRole && financeManagerRole) {
+        await tx.approvalStep.create({
+          data: {
+            approvalWorkflowId: wf.id,
+            stageType: ApprovalStageTypeConst.PAYMENT_FILE,
+            stepOrder: 1,
+            requiredRoleId: financeOfficerRole.id,
+            isRequired: true,
+          },
+        });
+        await tx.approvalStep.create({
+          data: {
+            approvalWorkflowId: wf.id,
+            stageType: ApprovalStageTypeConst.PAYMENT_FILE,
+            stepOrder: 2,
+            requiredRoleId: financeManagerRole.id,
+            isRequired: true,
+          },
+        });
+      }
+
+      // 4. Bump schema version
+      await tx.approvalWorkflow.update({
+        where: { id: wf.id },
+        data: { schemaVersion: 3 },
+      });
+
+      logger.info({ workflowId, companyId }, "[ApprovalWorkflow] Workflow schema upgraded to v3");
+    });
   }
 
   /**
@@ -218,91 +360,89 @@ export class ApprovalWorkflowService {
         },
       });
 
-      // Find the Admin, Finance Manager, and HR Manager roles dynamically
+      // Find the Admin, Finance Manager, and HR CS Manager roles dynamically
       const adminRole = await prisma.appRole.findFirst({
-        where: { name: { in: ["Admin", "admin", "ADMIN"] } },
+        where: { name: { in: REQUIRED_APPROVAL_ROLES.ADMIN } },
       });
-      let financeRole = await prisma.appRole.findFirst({
-        where: { name: { in: ["Finance Manager", "finance_manager", "FINANCE_MANAGER"] } },
-      });
-      if (!financeRole) {
-        const adminRole = await prisma.appRole.findFirst({
-          where: { name: { in: ["Admin", "admin", "ADMIN"] } },
-        });
-        financeRole = await prisma.appRole.upsert({
-          where: { id: 16 },
-          create: {
-            id: 16,
-            name: "Finance Manager",
-            permissions: (adminRole?.permissions ?? null) as any,
+      // Resolve roles by name — no hardcoded IDs
+      const financeRole = await this.resolveRoleByName(REQUIRED_APPROVAL_ROLES.FINANCE_MANAGER);
+      const hrCsManagerRole = await this.resolveRoleByName(REQUIRED_APPROVAL_ROLES.HR_CS_MANAGER);
+      const financeOfficerRole = await this.resolveRoleByName(REQUIRED_APPROVAL_ROLES.FINANCE_OFFICER);
+      const hrCsDirectorRole = await this.resolveRoleByName(REQUIRED_APPROVAL_ROLES.HR_CS_DIRECTOR);
+
+      const adminRoleId = adminRole?.id;
+      const financeRoleId = financeRole?.id;
+      const hrCsManagerRoleId = hrCsManagerRole?.id;
+
+      if (!hrCsManagerRoleId || !financeRoleId) {
+        logger.error(
+          {
+            errorCode: "APPROVAL_ROLE_MISSING",
+            companyId,
+            workflowId: workflow.id,
+            missingRoles: [
+              ...(!hrCsManagerRoleId ? ["HR_CS_MANAGER"] : []),
+              ...(!financeRoleId ? ["FINANCE_MANAGER"] : []),
+            ],
           },
-          update: {},
+          "[APPROVAL_ROLE_MISSING] Cannot seed default steps: required roles not found in AppRole table.",
+        );
+      } else {
+        await prisma.approvalStep.createMany({
+          data: [
+            {
+              approvalWorkflowId: workflow.id,
+              stageType: ApprovalStageTypeConst.ATTENDANCE,
+              stepOrder: 1,
+              requiredRoleId: hrCsManagerRoleId,
+              isRequired: true,
+            },
+            ...(hrCsDirectorRole
+              ? [{
+                  approvalWorkflowId: workflow.id,
+                  stageType: ApprovalStageTypeConst.ATTENDANCE,
+                  stepOrder: 2,
+                  requiredRoleId: hrCsDirectorRole.id,
+                  isRequired: true,
+                }]
+              : []),
+            {
+              approvalWorkflowId: workflow.id,
+              stageType: ApprovalStageTypeConst.PAYROLL_APPROVAL,
+              stepOrder: 3,
+              requiredRoleId: hrCsManagerRoleId,
+              isRequired: true,
+            },
+            {
+              approvalWorkflowId: workflow.id,
+              stageType: ApprovalStageTypeConst.PAYROLL_APPROVAL,
+              stepOrder: 4,
+              requiredRoleId: financeRoleId,
+              alternateRoleId: financeOfficerRole?.id ?? null,
+              isRequired: true,
+            },
+            {
+              approvalWorkflowId: workflow.id,
+              stageType: ApprovalStageTypeConst.PAYMENT_FILE,
+              stepOrder: 5,
+              requiredRoleId: financeOfficerRole?.id ?? financeRoleId,
+              isRequired: true,
+            },
+            {
+              approvalWorkflowId: workflow.id,
+              stageType: ApprovalStageTypeConst.PAYMENT_FILE,
+              stepOrder: 6,
+              requiredRoleId: financeRoleId,
+              isRequired: true,
+            },
+          ],
         });
       }
 
-      let hrManagerRole = await prisma.appRole.findFirst({
-        where: { name: { in: ["HR Manager", "HR_MANAGER", "hr_manager"] } },
-      });
-      if (!hrManagerRole) {
-        const hrRole = await prisma.appRole.findFirst({
-          where: { name: { in: ["HR", "hr", "HR Officer"] } },
-        });
-        hrManagerRole = await prisma.appRole.upsert({
-          where: { id: 14 },
-          create: {
-            id: 14,
-            name: "HR Manager",
-            permissions: (hrRole?.permissions ?? null) as any,
-          },
-          update: {},
-        });
-      }
-
-      const adminRoleId = adminRole?.id ?? 6; // fallback
-      const financeRoleId = financeRole.id; // guaranteed non-null after upsert
-      const hrManagerRoleId = hrManagerRole.id; // guaranteed non-null after upsert
-
-      // Ensure Finance Officer role exists
-      await this.ensureFinanceOfficerRole();
-
-      await prisma.approvalStep.createMany({
-        data: [
-          {
-            approvalWorkflowId: workflow.id,
-            stageType: ApprovalStageTypeConst.PAYROLL_DOCUMENT,
-            stepOrder: 0,
-            requiredRoleId: hrManagerRoleId,
-            isRequired: true,
-          },
-          {
-            approvalWorkflowId: workflow.id,
-            stageType: ApprovalStageTypeConst.PAYROLL_APPROVAL,
-            stepOrder: 1,
-            requiredRoleId: hrManagerRoleId,
-            isRequired: true,
-          },
-          {
-            approvalWorkflowId: workflow.id,
-            stageType: ApprovalStageTypeConst.PAYROLL_APPROVAL,
-            stepOrder: 2,
-            requiredRoleId: financeRoleId,
-            alternateRoleId: 15,
-            isRequired: true,
-          },
-          {
-            approvalWorkflowId: workflow.id,
-            stageType: ApprovalStageTypeConst.PAYMENT_FILE,
-            stepOrder: 3,
-            requiredRoleId: financeRoleId,
-            isRequired: true,
-          },
-        ],
-      });
-
-      console.log(`[ApprovalWorkflow] Seeded default workflow for company ${companyId}`);
+      logger.info({ companyId, workflowId: workflow.id }, "[ApprovalWorkflow] Seeded default workflow");
 
       // Re-fetch with steps
-      workflow = await prisma.approvalWorkflow.findUnique({
+      const updatedWorkflow = await prisma.approvalWorkflow.findUnique({
         where: { id: workflow.id },
         include: {
           steps: {
@@ -310,22 +450,35 @@ export class ApprovalWorkflowService {
             include: { requiredRole: true, alternateRole: true },
           },
         },
-      }) as any;
+      });
+      workflow = updatedWorkflow ?? workflow;
     } else {
-      // ── Upgrade existing workflows that are missing PAYROLL_DOCUMENT steps ──
-      await this.ensurePayrollDocStep(companyId);
-      await this.ensurePayrollApprovalSteps(companyId);
-
-      // Re-fetch after potential upgrade
-      workflow = await prisma.approvalWorkflow.findFirst({
-        where: { companyId, isActive: true },
-        include: {
-          steps: {
-            orderBy: { stepOrder: "asc" },
-            include: { requiredRole: true, alternateRole: true },
+      // ── Upgrade existing workflows that need schema migration ──
+      if (workflow.schemaVersion < 2) {
+        await this.upgradeWorkflowSchema(workflow.id, companyId);
+        // Re-fetch after upgrade — override var with updated result
+        workflow = await prisma.approvalWorkflow.findFirst({
+          where: { companyId, isActive: true },
+          include: {
+            steps: {
+              orderBy: { stepOrder: "asc" },
+              include: { requiredRole: true, alternateRole: true },
+            },
           },
-        },
-      }) as any;
+        }) ?? workflow;
+      }
+      if (workflow && workflow.schemaVersion < 3) {
+        await this.upgradeWorkflowSchemaV3(workflow.id, companyId);
+        workflow = await prisma.approvalWorkflow.findFirst({
+          where: { companyId, isActive: true },
+          include: {
+            steps: {
+              orderBy: { stepOrder: "asc" },
+              include: { requiredRole: true, alternateRole: true },
+            },
+          },
+        }) ?? workflow;
+      }
     }
 
     return workflow;
@@ -590,10 +743,7 @@ export class ApprovalWorkflowService {
     attendanceImportId?: string,
     payrollPeriodId?: string,
   ) {
-    const resolvedStageType =
-      stageType === ApprovalStageTypeConst.ATTENDANCE
-        ? ApprovalStageTypeConst.PAYROLL_DOCUMENT
-        : stageType;
+    const resolvedStageType = stageType;
 
     const result = await prisma.$transaction(async (tx) => {
       // ── Period-level submission: submit ALL runs for the period ──
@@ -635,7 +785,7 @@ export class ApprovalWorkflowService {
         const request = await tx.approvalRequest.create({
           data: {
             stageType: resolvedStageType,
-            referenceType: referenceType as any,
+            referenceType: referenceType as ReferenceType,
             payrollRunId: periodRuns[0].id,
             attendanceImportId: attendanceImportId ?? undefined,
             status: ApprovalStatusConst.PENDING,
@@ -654,6 +804,22 @@ export class ApprovalWorkflowService {
           data: { status: nextStatus },
         });
 
+        // PAYMENT_FILE: Auto-approve step 1 (Finance Officer) within the same transaction.
+        // Finance Officer's act of submitting IS their approval of step 1.
+        // This immediately advances currentStep to step 2 (Finance Manager) so the
+        // Finance Manager can approve without receiving a 403.
+        if (isPaymentStage) {
+          await tx.approvalAction.create({
+            data: {
+              approvalRequestId: request.id,
+              actorId: userId,
+              action: ApprovalStatusConst.APPROVED,
+              comment: "Auto-approved: Finance Officer submission counts as step-1 approval",
+              ipAddress: null,
+            },
+          });
+        }
+
         return request;
       }
 
@@ -661,7 +827,7 @@ export class ApprovalWorkflowService {
       const request = await tx.approvalRequest.create({
         data: {
           stageType: resolvedStageType,
-          referenceType: referenceType as any,
+          referenceType: referenceType as ReferenceType,
           payrollRunId: payrollRunId ?? undefined,
           attendanceImportId: attendanceImportId ?? undefined,
           status: ApprovalStatusConst.PENDING,
@@ -693,6 +859,19 @@ export class ApprovalWorkflowService {
         });
       }
 
+      // PAYMENT_FILE (single-run): Auto-approve step 1 (Finance Officer) — same reason as above.
+      if (resolvedStageType === ApprovalStageTypeConst.PAYMENT_FILE) {
+        await tx.approvalAction.create({
+          data: {
+            approvalRequestId: request.id,
+            actorId: userId,
+            action: ApprovalStatusConst.APPROVED,
+            comment: "Auto-approved: Finance Officer submission counts as step-1 approval",
+            ipAddress: null,
+          },
+        });
+      }
+
       return request;
     });
 
@@ -700,24 +879,26 @@ export class ApprovalWorkflowService {
     if (attendanceImportId && referenceType === "ATTENDANCE_IMPORT") {
       try {
         const hrManagerRole = await prisma.appRole.findFirst({
-          where: { name: { in: ["HR Manager", "HR_MANAGER", "hr_manager"] } },
+          where: { name: { in: REQUIRED_APPROVAL_ROLES.HR_CS_MANAGER } },
         });
         if (hrManagerRole) {
           const hrManagers = await prisma.appUser.findMany({
             where: { roleId: hrManagerRole.id },
           });
           for (const mgr of hrManagers) {
-            await attendanceNotificationService.createNotification({
+            await notificationService.create({
               recipientId: mgr.id,
-              type: "ATTENDANCE_SUBMITTED" as any,
+              type: "ATTENDANCE_SUBMITTED",
               title: "Attendance Submitted for Approval",
-              message: `Attendance import has been submitted for your approval.`,
-              attendanceImportId,
+              message: "Attendance import has been submitted for your approval.",
+              category: "attendance",
+              referenceId: attendanceImportId,
+              link: "/approval",
             });
           }
         }
       } catch (err) {
-        console.error("[ApprovalWorkflow] Failed to send submit notification:", err);
+        logger.error(err, "[ApprovalWorkflow] Failed to send submit notification");
       }
     }
 
@@ -746,22 +927,29 @@ export class ApprovalWorkflowService {
     roleOverride?: string,
     jwtRoleName?: string,       // role name from JWT — fallback when user not found in local DB
   ) {
-    // Ensure the workflow has PAYROLL_DOCUMENT steps (safe to call even if not needed)
-    await this.ensurePayrollDocStep(companyId);
-    await this.ensurePayrollApprovalSteps(companyId);
-
-    // Load workflow before the transaction so it's available in notification hooks
-    // (The transaction only performs reads on the workflow, so this is safe.)
-    const workflow = await prisma.approvalWorkflow.findFirst({
-      where: { companyId, isActive: true },
-      include: {
-        steps: {
-          orderBy: { stepOrder: "asc" },
-        },
-      },
-    });
+    // (workflow is loaded inside the transaction below to avoid stale-read races)
 
     const result = await prisma.$transaction(async (tx) => {
+      // 0. Load the workflow INSIDE the transaction to eliminate stale-read window
+      const workflow = await tx.approvalWorkflow.findFirst({
+        where: { companyId, isActive: true },
+        include: { steps: { orderBy: { stepOrder: "asc" } } },
+      });
+
+      // If workflow needs schema upgrade, do it now (schemaVersion-gated, safe to call)
+      if (workflow && workflow.schemaVersion < 2) {
+        // Upgrade runs in its own nested transaction; re-read after
+        await this.upgradeWorkflowSchema(workflow.id, companyId);
+      }
+
+      // Re-read workflow after potential upgrade (still inside main tx)
+      const activeWorkflow = workflow?.schemaVersion && workflow.schemaVersion < 2
+        ? await tx.approvalWorkflow.findFirst({
+            where: { companyId, isActive: true },
+            include: { steps: { orderBy: { stepOrder: "asc" } } },
+          })
+        : workflow;
+
       // 1. Load the request
       const request = await tx.approvalRequest.findUnique({
         where: { id: requestId },
@@ -785,27 +973,22 @@ export class ApprovalWorkflowService {
         );
       }
 
-      if (!workflow) {
+      if (!activeWorkflow) {
         throw new CustomError(
           httpStatus.BAD_REQUEST,
           "No active approval workflow configured for this company.",
         );
       }
 
-      // Map stageType "ATTENDANCE" to "PAYROLL_DOCUMENT" dynamically
-      const targetStageType = request.stageType === ApprovalStageTypeConst.ATTENDANCE
-        ? ApprovalStageTypeConst.PAYROLL_DOCUMENT
-        : request.stageType;
-
-      // 3. Filter steps matching this request's stageType
-      const relevantSteps = workflow.steps.filter(
-        (s) => s.stageType === targetStageType,
+      // 3. Use the request's stageType directly — ATTENDANCE is now its own stage type
+      const relevantSteps = activeWorkflow.steps.filter(
+        (s) => s.stageType === request.stageType,
       );
 
       if (relevantSteps.length === 0) {
         throw new CustomError(
           httpStatus.BAD_REQUEST,
-          `No workflow steps configured for stage "${targetStageType}".`,
+          `No workflow steps configured for stage "${request.stageType}".`,
         );
       }
 
@@ -816,6 +999,31 @@ export class ApprovalWorkflowService {
           .map((a) => a.actor?.roleId)
           .filter((id): id is number => id != null),
       );
+
+      // 4b. Skip steps whose requiredRole has zero AppUsers (auto-approve — role exists but no one to act)
+      const stepsToAutoApprove = new Map<string, Set<number>>(); // stepId → roleIds auto-approved
+      for (const step of relevantSteps) {
+        if (!step.isRequired) continue;
+        const alreadyApproved = approvedRoleIds.has(step.requiredRoleId) ||
+          (step.alternateRoleId != null && approvedRoleIds.has(step.alternateRoleId));
+        if (alreadyApproved) continue;
+
+        const userCount = await tx.appUser.count({
+          where: { roleId: step.requiredRoleId },
+        });
+        if (userCount === 0) {
+          // No users assigned to this role — auto-approve the step
+          approvedRoleIds.add(step.requiredRoleId);
+          if (!stepsToAutoApprove.has(step.id)) {
+            stepsToAutoApprove.set(step.id, new Set());
+          }
+          stepsToAutoApprove.get(step.id)!.add(step.requiredRoleId);
+          logger.info(
+            { stepId: step.id, roleId: step.requiredRoleId },
+            "[approveRequest] Step auto-approved: no users assigned to required role",
+          );
+        }
+      }
 
       // 5. Find current step = first required step whose role (or alternate) hasn't approved
       const currentStep = relevantSteps.find((step) => {
@@ -863,27 +1071,10 @@ export class ApprovalWorkflowService {
         }
       }
 
-      console.log("[approveRequest DEBUG]", {
-        requestId,
-        approvedRoleIds: [...approvedRoleIds],
-        currentStepRequiredRoleId: currentStep.requiredRoleId,
-        currentStepAlternateRoleId: currentStep.alternateRoleId,
-        userRoleId: user?.roleId,
-        effectiveRoleId,
-        jwtRoleName,
-        actions: request.approvalActions.map(a => ({
-          id: a.id,
-          action: a.action,
-          actorRoleId: (a.actor as any)?.roleId,
-        })),
-        relevantSteps: relevantSteps.map(s => ({
-          id: s.id,
-          stepOrder: s.stepOrder,
-          requiredRoleId: s.requiredRoleId,
-          alternateRoleId: s.alternateRoleId,
-          isRequired: s.isRequired,
-        })),
-      });
+      logger.debug(
+        { requestId, effectiveRoleId, currentStepRequiredRoleId: currentStep.requiredRoleId },
+        "[approveRequest] Role check",
+      );
 
       if (
         !effectiveRoleId ||
@@ -894,7 +1085,7 @@ export class ApprovalWorkflowService {
         const userRole = await tx.appRole.findUnique({
           where: { id: user?.roleId ?? (effectiveRoleId ?? 0) },
         });
-        const isAdmin = userRole?.name && ["Admin", "Super Admin"].includes(userRole.name);
+        const isAdmin = userRole?.name && [RoleNames.ADMIN as string, RoleNames.SUPERADMIN as string].includes(userRole.name);
 
         if (!isAdmin) {
           throw new CustomError(
@@ -981,6 +1172,34 @@ export class ApprovalWorkflowService {
               data: { status: newPayrollStatus },
             });
           }
+
+          // When PayrollRun transitions to APPROVED or DONE, mark all payslips as DONE
+          if (newPayrollStatus === PayrollStatusConst.APPROVED || newPayrollStatus === PayrollStatusConst.DONE) {
+            if (anchorRun?.payrollPeriodId) {
+              // Update payslips for all runs in the period that match the new status
+              await tx.payslip.updateMany({
+                where: {
+                  payrollRunItem: {
+                    payrollRun: {
+                      payrollPeriodId: anchorRun.payrollPeriodId,
+                      status: newPayrollStatus,
+                    },
+                  },
+                  visibilityStatus: "DRAFT",
+                },
+                data: { visibilityStatus: "DONE" },
+              });
+            } else {
+              // No period — update payslips for this specific run only
+              await tx.payslip.updateMany({
+                where: {
+                  payrollRunItem: { payrollRunId: request.payrollRunId! },
+                  visibilityStatus: "DRAFT",
+                },
+                data: { visibilityStatus: "DONE" },
+              });
+            }
+          }
         }
 
         if (request.attendanceImportId) {
@@ -1010,65 +1229,116 @@ export class ApprovalWorkflowService {
     // ── Notification hooks (non-blocking — errors logged but not thrown) ──
     if (result?.attendanceImportId) {
       try {
-        await attendanceNotificationService.createNotification({
+        await notificationService.create({
           recipientId: Number(result.requestedBy),
-          type: "ATTENDANCE_APPROVED" as any,
+          type: "ATTENDANCE_APPROVED",
           title: "Attendance Approved",
           message: "Your attendance submission has been approved.",
-          attendanceImportId: result.attendanceImportId,
+          category: "attendance",
+          referenceId: result.attendanceImportId,
+          link: "/approval",
         });
       } catch (err) {
-        console.error("[ApprovalWorkflow] Failed to send approve notification:", err);
+        logger.error(err, "[ApprovalWorkflow] Failed to send approve notification");
       }
     }
 
     // ── Payroll approval notifications ──
     if (result?.stageType === ApprovalStageTypeConst.PAYROLL_APPROVAL && !result?.attendanceImportId) {
       try {
-        const approvedRoleIds = new Set(
-          result.approvalActions
-            .filter((a: any) => a.action === "APPROVED")
-            .map((a: any) => a.actor?.roleId)
-            .filter((id: any): id is number => id != null),
+        const approvedRoleIds = new Set<number>(
+          (result.approvalActions ?? [])
+            .filter((a) => a.action === "APPROVED")
+            .map((a) => a.actor?.roleId)
+            .filter((id): id is number => id != null),
         );
 
-        if (!workflow) return;
-        const relevantSteps = workflow.steps.filter(
+        // Load workflow for step-completion check
+        const notifWorkflow = await prisma.approvalWorkflow.findFirst({
+          where: { companyId, isActive: true },
+          include: { steps: { orderBy: { stepOrder: "asc" } } },
+        });
+        if (!notifWorkflow) return result;
+        const relevantSteps = notifWorkflow.steps.filter(
           (s) => s.stageType === result!.stageType,
         );
 
         const allStepsDone = relevantSteps
           .filter((s) => s.isRequired)
-          .every((s) => approvedRoleIds.has(s.requiredRoleId) || (s.alternateRoleId && approvedRoleIds.has(s.alternateRoleId)));
+          .every((s) => approvedRoleIds.has(s.requiredRoleId) || (s.alternateRoleId != null && approvedRoleIds.has(s.alternateRoleId)));
 
         if (allStepsDone) {
-          await payrollNotificationService.createNotification({
+          await notificationService.create({
             recipientId: Number(result.requestedBy),
             type: "PAYROLL_APPROVED",
             title: "Payroll Approved — Ready for Payment",
             message: "All approvals complete. Payroll is cleared for payment.",
-            payrollRunId: result.payrollRunId ?? undefined,
+            category: "payroll",
+            referenceId: result.payrollRunId ?? undefined,
+            link: "/payroll",
           });
         } else {
-          const financeRoleIds = [15, 16];
-          for (const roleId of financeRoleIds) {
+          // Notify finance users by role name — no hardcoded IDs
+          const financeRoles = await prisma.appRole.findMany({
+            where: { name: { in: [...REQUIRED_APPROVAL_ROLES.FINANCE_MANAGER, ...REQUIRED_APPROVAL_ROLES.FINANCE_OFFICER] } },
+            select: { id: true },
+          });
+          const financeRoleIds = financeRoles.map((r) => r.id);
+          if (financeRoleIds.length > 0) {
             const financeUsers = await prisma.appUser.findMany({
-              where: { roleId },
+              where: { roleId: { in: financeRoleIds } },
               select: { id: true },
             });
             for (const user of financeUsers) {
-              await payrollNotificationService.createNotification({
+              await notificationService.create({
                 recipientId: user.id,
                 type: "PAYROLL_SUBMITTED",
                 title: "Payroll Ready for Finance Review",
-                message: "HR Manager has approved. Finance review and approval required.",
-                payrollRunId: result.payrollRunId ?? undefined,
+                message: "HR CS Manager has approved. Finance review and approval required.",
+                category: "payroll",
+                referenceId: result.payrollRunId ?? undefined,
+                link: "/approval",
               });
             }
           }
         }
       } catch (err) {
-        console.error("[ApprovalWorkflow] Failed to send payroll approval notifications:", err);
+        logger.error(err, "[ApprovalWorkflow] Failed to send payroll approval notifications");
+      }
+    }
+
+    // ── Auto-generate payslips on final PAYMENT_FILE approval ──
+    if (result?.stageType === ApprovalStageTypeConst.PAYMENT_FILE && !result?.attendanceImportId) {
+      try {
+        // Find the anchor run's period
+        const anchorRun = await prisma.payrollRun.findUnique({
+          where: { id: result.payrollRunId! },
+          select: { payrollPeriodId: true },
+        });
+
+        if (anchorRun?.payrollPeriodId) {
+          // Find all runs in this period that just transitioned to DONE
+          const doneRuns = await prisma.payrollRun.findMany({
+            where: {
+              payrollPeriodId: anchorRun.payrollPeriodId,
+              status: PayrollStatusConst.DONE,
+            },
+            select: { id: true },
+          });
+
+          for (const run of doneRuns) {
+            payslipRenderService
+              .batchGeneratePayslipPdfs({
+                companyId,
+                payrollRunId: run.id,
+              })
+              .catch((err: any) => {
+                logger.error({ err, runId: run.id }, "[Payslip] Auto-generation failed for run");
+              });
+          }
+        }
+      } catch (err) {
+        logger.error(err, "[Payslip] Failed to auto-generate payslips on final approval");
       }
     }
 
@@ -1086,9 +1356,6 @@ export class ApprovalWorkflowService {
     roleOverride?: string,
     jwtRoleName?: string,       // role name from JWT — fallback when user not found in local DB
   ) {
-    // Ensure the workflow has PAYROLL_DOCUMENT steps (safe to call even if not needed)
-    await this.ensurePayrollDocStep(companyId);
-    await this.ensurePayrollApprovalSteps(companyId);
 
     const result = await prisma.$transaction(async (tx) => {
       // 1. Load the request
@@ -1131,14 +1398,9 @@ export class ApprovalWorkflowService {
         );
       }
 
-      // Map stageType "ATTENDANCE" to "PAYROLL_DOCUMENT" dynamically
-      const targetStageType = request.stageType === ApprovalStageTypeConst.ATTENDANCE
-        ? ApprovalStageTypeConst.PAYROLL_DOCUMENT
-        : request.stageType;
-
-      // 3. Verify the caller's role matches the current step (same logic as approve)
+      // 3. Use the request's stageType directly — ATTENDANCE is now its own stage type
       const relevantSteps = workflow.steps.filter(
-        (s) => s.stageType === targetStageType,
+        (s) => s.stageType === request.stageType,
       );
 
       const approvedRoleIds = new Set(
@@ -1199,7 +1461,7 @@ export class ApprovalWorkflowService {
         const userRole = await tx.appRole.findUnique({
           where: { id: user?.roleId ?? (effectiveRoleId ?? 0) },
         });
-        const isAdmin = userRole?.name && ["Admin", "Super Admin"].includes(userRole.name);
+        const isAdmin = userRole?.name && [RoleNames.ADMIN as string, RoleNames.SUPERADMIN as string].includes(userRole.name);
 
         if (!isAdmin) {
           throw new CustomError(
@@ -1241,15 +1503,38 @@ export class ApprovalWorkflowService {
         },
       });
 
-      // 6. Reset PayrollRun to DRAFT (rejection always resets regardless of stage)
-      if (request.payrollRunId) {
-        await tx.payrollRun.update({
-          where: { id: request.payrollRunId },
-          data: { status: PayrollStatusConst.DRAFT },
-        });
-
-        // Also reset sibling runs in the same period that were submitted together
-        if (request.stageType !== ApprovalStageTypeConst.PAYMENT_FILE) {
+      // 6. Determine rejection routing based on stage type
+      if (request.stageType === ApprovalStageTypeConst.PAYMENT_FILE) {
+        // Finance rejection: go back to Finance Officer — reset to APPROVED
+        // so the Finance Officer can resubmit the payment file
+        if (request.payrollRunId) {
+          await tx.payrollRun.update({
+            where: { id: request.payrollRunId },
+            data: { status: PayrollStatusConst.APPROVED },
+          });
+          // Also reset sibling runs in the same period
+          const anchorRun = await tx.payrollRun.findUnique({
+            where: { id: request.payrollRunId },
+            select: { payrollPeriodId: true },
+          });
+          if (anchorRun?.payrollPeriodId) {
+            await tx.payrollRun.updateMany({
+              where: {
+                payrollPeriodId: anchorRun.payrollPeriodId,
+                status: PayrollStatusConst.PENDING_PAYMENT_APPROVAL,
+              },
+              data: { status: PayrollStatusConst.APPROVED },
+            });
+          }
+        }
+      } else {
+        // HR-tier rejection: reset to DRAFT so initiator can resubmit
+        if (request.payrollRunId) {
+          await tx.payrollRun.update({
+            where: { id: request.payrollRunId },
+            data: { status: PayrollStatusConst.DRAFT },
+          });
+          // Also reset sibling runs in the same period
           const anchorRun = await tx.payrollRun.findUnique({
             where: { id: request.payrollRunId },
             select: { payrollPeriodId: true },
@@ -1296,31 +1581,34 @@ export class ApprovalWorkflowService {
     // ── Notification hooks (non-blocking) ──
     if (result?.attendanceImportId) {
       try {
-        await attendanceNotificationService.createNotification({
+        await notificationService.create({
           recipientId: Number(result.requestedBy),
-          type: "ATTENDANCE_REJECTED" as any,
+          type: "ATTENDANCE_REJECTED",
           title: "Attendance Rejected",
           message: comment || "Your attendance submission has been rejected.",
-          attendanceImportId: result.attendanceImportId,
-          rejectionNote: comment || undefined,
+          category: "attendance",
+          referenceId: result.attendanceImportId,
+          link: "/approval",
         });
       } catch (err) {
-        console.error("[ApprovalWorkflow] Failed to send reject notification:", err);
+        logger.error(err, "[ApprovalWorkflow] Failed to send reject notification");
       }
     }
 
     // ── Payroll rejection notification ──
     if (result?.stageType === ApprovalStageTypeConst.PAYROLL_APPROVAL && !result?.attendanceImportId) {
       try {
-        await payrollNotificationService.createNotification({
+        await notificationService.create({
           recipientId: Number(result.requestedBy),
           type: "PAYROLL_REJECTED",
           title: "Payroll Approval Rejected",
           message: comment || "Your payroll submission has been rejected. Please correct and resubmit.",
-          payrollRunId: result.payrollRunId ?? undefined,
+          category: "payroll",
+          referenceId: result.payrollRunId ?? undefined,
+          link: "/payroll",
         });
       } catch (err) {
-        console.error("[ApprovalWorkflow] Failed to send payroll rejection notification:", err);
+        logger.error(err, "[ApprovalWorkflow] Failed to send payroll rejection notification");
       }
     }
 

@@ -7,15 +7,15 @@
  *  1. The controller (preview endpoint) to return a preview without persisting.
  *  2. The payroll run service (Step 2b) to persist allowance during batch processing.
  *
- * Two calculation methods are supported:
+ * Three calculation methods are supported:
  *
  * **PERCENTAGE** — Tiered percentage of the salary difference:
  *   salaryDiff     = actingPositionBasicSalary − employeeBasicSalary
  *   allowanceAmount = salaryDiff × (matchedTier.percent / 100)
  *
- * **AMOUNT** — Fixed amount regardless of salary difference or months elapsed:
+ * **FIXED_AMOUNT** / **RULE_FIXED_AMOUNT** — Fixed amount regardless of salary:
  *   allowanceAmount = fixedAmount
- *   (no tier matching, no month breakdown)
+ *   (no salary diff, no month breakdown)
  *
  * Default tier brackets (PERCENTAGE method):
  *   Month 1       →  0%   (probationary / first-month transition)
@@ -42,7 +42,7 @@ export interface Tier {
 export interface CalculationResult {
     /** Number of whole calendar months elapsed (minimum 1). Only meaningful for PERCENTAGE. */
     monthsElapsed: number;
-    /** The tier bracket that applies at `monthsElapsed`, or null for AMOUNT method. */
+    /** The tier bracket that applies at `monthsElapsed`, or null for FIXED_AMOUNT / RULE_FIXED_AMOUNT methods. */
     matchedTier: Tier | null;
     /** `actingPositionBasicSalary − employeeBasicSalary` (can be negative → zeroed out). */
     salaryDiff: Prisma.Decimal;
@@ -80,9 +80,9 @@ export function calculateMonthsElapsed(startDate: Date, endDate: Date): number {
 /**
  * Calculate the acting allowance for a single assignment within a payroll period.
  *
- * Supports two methods:
+ * Supports three methods:
  *  - **PERCENTAGE**: Computes allowance from salary difference × tier percentage.
- *  - **AMOUNT**: Returns the fixed amount directly.
+ *  - **FIXED_AMOUNT** / **RULE_FIXED_AMOUNT**: Returns the fixed amount directly.
  *
  * Ethiopian regulation limits acting allowance to 6 months total.  If the
  * assignment has been running longer than 6 months, the `isExtended` flag
@@ -94,8 +94,8 @@ export function calculateMonthsElapsed(startDate: Date, endDate: Date): number {
  * @param basicSalary          — The employee's regular basic salary.
  * @param startDate            — When the acting assignment started.
  * @param periodEndDate        — End of the payroll period (e.g. month end).
- * @param calculationMethod    — "AMOUNT" or "PERCENTAGE" (defaults to PERCENTAGE).
- * @param fixedAmount          — The fixed allowance amount (only used when method is AMOUNT).
+ * @param calculationMethod    — "FIXED_AMOUNT", "RULE_FIXED_AMOUNT", or "PERCENTAGE" (defaults to PERCENTAGE).
+ * @param fixedAmount          — The fixed allowance amount (only used when method is FIXED_AMOUNT or RULE_FIXED_AMOUNT).
  * @param isExtended           — Whether the assignment has been formally extended beyond 6 months.
  * @returns A CalculationResult with the allowance amount.
  */
@@ -105,11 +105,11 @@ export function calculateActingAllowance(
     basicSalary: Prisma.Decimal | number | string,
     startDate: Date,
     periodEndDate: Date,
-    calculationMethod: 'AMOUNT' | 'PERCENTAGE' = 'PERCENTAGE',
+    calculationMethod: 'PERCENTAGE' | 'FIXED_AMOUNT' | 'RULE_FIXED_AMOUNT' = 'PERCENTAGE',
     fixedAmount?: Prisma.Decimal | number | string,
     isExtended: boolean = false,
 ): CalculationResult {
-    if (calculationMethod === 'AMOUNT') {
+    if (calculationMethod === 'FIXED_AMOUNT' || calculationMethod === 'RULE_FIXED_AMOUNT') {
         const amount = fixedAmount !== undefined
             ? new Prisma.Decimal(fixedAmount)
             : new Prisma.Decimal(0);

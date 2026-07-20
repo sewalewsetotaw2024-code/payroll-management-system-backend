@@ -45,6 +45,7 @@ export interface SyncReportModel {
     employee_name: string;
     tin_number: string | null;
     pension_number: string | null;
+    pension_eligible: boolean | null;
     gender: string | null;
     date_of_birth: string | null;
     place_of_work: string | null;

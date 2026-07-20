@@ -18,6 +18,12 @@ export const getPayrollRunsSchema = z.object({
     }),
 });
 
+export const getEmployeeStatsSchema = z.object({
+    query: z.object({
+        payrollPeriodId: z.string().uuid("payrollPeriodId must be a valid UUID"),
+    }),
+});
+
 export const getPayrollRunSchema = z.object({
     params: z.object({
         id: z.string().uuid("Run ID must be a valid UUID"),

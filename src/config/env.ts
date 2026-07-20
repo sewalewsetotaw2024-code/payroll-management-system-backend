@@ -35,6 +35,12 @@ const envSchema = z.object({
     CLOUDINARY_API_SECRET: z.string().min(1, "CLOUDINARY_API_SECRET is required"),
     REDIS_URL: z.string().default("redis://localhost:6379"),
     REDIS_KEY_PREFIX: z.string().default("payroll:cache:"),
+    PUPPETEER_EXECUTABLE_PATH: z.string().default("/usr/bin/google-chrome"),
+    SMTP_HOST: z.string().optional(),
+    SMTP_PORT: z.coerce.number().int().default(587),
+    SMTP_USER: z.string().optional(),
+    SMTP_PASS: z.string().optional(),
+    EMAIL_FROM: z.string().default("noreply@adiu.com"),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);
@@ -74,6 +80,9 @@ const config: AppConfig = {
         cloudName: env.CLOUDINARY_CLOUD_NAME,
         apiKey: env.CLOUDINARY_API_KEY,
         apiSecret: env.CLOUDINARY_API_SECRET,
+    },
+    puppeteer: {
+        executablePath: env.PUPPETEER_EXECUTABLE_PATH,
     },
     redis: {
         url: env.REDIS_URL,

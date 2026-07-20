@@ -59,4 +59,32 @@ export const EmployeeController = {
             });
         },
     ),
+
+    /**
+     * GET /employees/export
+     * Exports all matching employees to an XLSX workbook.
+     * Supports the same search and status filters as the list endpoint.
+     */
+    exportExcel: asyncHandler(
+        async (req: Request, res: Response) => {
+            const companyId = resolveCompanyId(req as any);
+            const { search, status } = req.query;
+
+            const buffer = await employeeService.exportToExcel(companyId, {
+                search: search as string,
+                status: status as string,
+            });
+
+            const filename = `employees-export-${new Date().toISOString().slice(0, 10)}.xlsx`;
+            res.setHeader(
+                "Content-Type",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            );
+            res.setHeader(
+                "Content-Disposition",
+                `attachment; filename="${filename}"`,
+            );
+            res.send(buffer);
+        },
+    ),
 };

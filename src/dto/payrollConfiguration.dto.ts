@@ -499,6 +499,15 @@ export const listBatchEmployeesSchema = {
     }),
 };
 
+export const moveBatchEmployeeSchema = {
+    body: z.object({
+        targetBatchId: z.string().min(1, "targetBatchId is required"),
+    }),
+    params: z.object({
+        id: z.string().min(1, "id is required"),
+    }),
+};
+
 // ── Payslip Notification Settings ────────────────────────────────────────────
 
 const payslipNotificationBody = z.object({

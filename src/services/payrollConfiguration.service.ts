@@ -2336,6 +2336,60 @@ export class PayrollConfigurationService {
         }
     }
 
+    async removeBatchEmployee(companyId: number, batchEmployeeId: string) {
+        const record = await prisma.payrollBatchEmployee.findFirst({
+            where: {
+                id: batchEmployeeId,
+                payrollBatch: { payrollPeriod: { companyId } },
+            },
+        });
+        if (!record) {
+            throw new CustomError(httpStatus.NOT_FOUND, "Batch employee record not found or unauthorized");
+        }
+        await prisma.payrollBatchEmployee.delete({ where: { id: batchEmployeeId } });
+    }
+
+    async moveBatchEmployee(companyId: number, batchEmployeeId: string, targetBatchId: string) {
+        const record = await prisma.payrollBatchEmployee.findFirst({
+            where: {
+                id: batchEmployeeId,
+                payrollBatch: { payrollPeriod: { companyId } },
+            },
+        });
+        if (!record) {
+            throw new CustomError(httpStatus.NOT_FOUND, "Batch employee record not found or unauthorized");
+        }
+
+        // Verify target batch exists in the same period and belongs to company
+        const targetBatch = await prisma.payrollBatch.findFirst({
+            where: { id: targetBatchId, payrollPeriod: { companyId } },
+        });
+        if (!targetBatch) {
+            throw new CustomError(httpStatus.NOT_FOUND, "Target batch not found or unauthorized");
+        }
+        if (targetBatch.payrollPeriodId !== record.payrollPeriodId) {
+            throw new CustomError(httpStatus.BAD_REQUEST, "Target batch is in a different payroll period");
+        }
+
+        // Check the @@unique([employeeId, payrollPeriodId]) constraint won't be violated
+        const existingInTarget = await prisma.payrollBatchEmployee.findFirst({
+            where: {
+                employeeId: record.employeeId,
+                payrollPeriodId: record.payrollPeriodId,
+                payrollBatchId: targetBatchId,
+            },
+        });
+        if (existingInTarget) {
+            throw new CustomError(httpStatus.CONFLICT, "Employee already exists in the target batch");
+        }
+
+        const updated = await prisma.payrollBatchEmployee.update({
+            where: { id: batchEmployeeId },
+            data: { payrollBatchId: targetBatchId },
+        });
+        return updated;
+    }
+
     // =========================================================================
     // PAYSLIP NOTIFICATION SETTINGS
     // =========================================================================

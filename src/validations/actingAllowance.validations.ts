@@ -5,9 +5,10 @@
  * Validates all incoming request bodies, params, and queries for the
  * Acting Allowance Rules CRUD and Acting Assignments CRUD endpoints.
  *
- * Supports two calculation methods:
- *  - AMOUNT: A fixed amount for all months (no percentage/tier fields)
+ * Supports three calculation methods:
  *  - PERCENTAGE: Tiered percentage brackets based on salary difference
+ *  - FIXED_AMOUNT: Fixed amount per-assignment (assignment-level override)
+ *  - RULE_FIXED_AMOUNT: Fixed amount from rule.fixedAmount, shared across all assignments
  */
 
 import { z } from "zod";
@@ -24,10 +25,10 @@ const tierSchema = z.object({
 /** POST /api/v1/acting-allowance-rules — Create a new rule. */
 export const createRuleSchema = z.object({
     body: z.object({
-        calculationMethod: z.enum(["AMOUNT", "PERCENTAGE"]).optional().default("PERCENTAGE"),
+        calculationMethod: z.enum(["PERCENTAGE", "FIXED_AMOUNT", "RULE_FIXED_AMOUNT"]).optional().default("PERCENTAGE"),
         fixedAmount: z.number().positive("Fixed amount must be positive").optional().nullable(),
         basis: z.enum(["BASIC_DIFF", "GROSS_DIFF"]).optional().default("BASIC_DIFF"),
-        tiers: z.array(tierSchema).min(1, "At least one tier is required").optional(),
+        tiers: z.array(tierSchema).optional(),
         payablePercent: z.number().min(0).max(1).optional(),
         minimumPeriodMonths: z.number().int().min(1).optional(),
         maximumPeriodMonths: z.number().int().min(1).optional(),
@@ -38,10 +39,14 @@ export const createRuleSchema = z.object({
             if (data.calculationMethod === "PERCENTAGE") {
                 return (data.tiers && data.tiers.length > 0) || data.payablePercent !== undefined;
             }
-            return true; // AMOUNT: basis is now the config, amount is per-assignment
+            if (data.calculationMethod === "RULE_FIXED_AMOUNT") {
+                return data.fixedAmount !== null && data.fixedAmount !== undefined && data.fixedAmount > 0;
+            }
+            // FIXED_AMOUNT has no specific constraints (amount is per-assignment)
+            return true;
         },
         {
-            message: "Percentage method requires at least one tier or payablePercent",
+            message: "PERCENTAGE requires tiers or payablePercent; RULE_FIXED_AMOUNT requires a positive fixedAmount",
         },
     ),
 });
@@ -49,16 +54,28 @@ export const createRuleSchema = z.object({
 /** PUT /api/v1/acting-allowance-rules/:id — Partially update a rule. */
 export const updateRuleSchema = z.object({
     body: z.object({
-        calculationMethod: z.enum(["AMOUNT", "PERCENTAGE"]).optional(),
+        calculationMethod: z.enum(["PERCENTAGE", "FIXED_AMOUNT", "RULE_FIXED_AMOUNT"]).optional(),
         fixedAmount: z.number().positive().optional().nullable(),
         basis: z.enum(["BASIC_DIFF", "GROSS_DIFF"]).optional(),
-        tiers: z.array(tierSchema).min(1).optional(),
+        tiers: z.array(tierSchema).optional(),
         payablePercent: z.number().min(0).max(1).optional(),
         minimumPeriodMonths: z.number().int().min(1).optional(),
         maximumPeriodMonths: z.number().int().min(1).optional(),
         effectiveDate: z.string().refine((v) => !isNaN(Date.parse(v)), "Invalid date").optional(),
         isActive: z.boolean().optional(),
-    }),
+    }).refine(
+        (data) => {
+            // PERCENTAGE requires at least one tier or a payablePercent
+            if (data.calculationMethod === "PERCENTAGE") {
+                return (data.tiers && data.tiers.length > 0) || data.payablePercent !== undefined;
+            }
+            // FIXED_AMOUNT / RULE_FIXED_AMOUNT are fine with empty or omitted tiers
+            return true;
+        },
+        {
+            message: "PERCENTAGE requires tiers or payablePercent",
+        },
+    ),
     params: z.object({
         id: z.string().uuid(),
     }),
@@ -142,7 +159,7 @@ export const previewAllowanceSchema = z.object({
         actingAllowanceRuleId: z.string().uuid("Rule ID must be a valid UUID"),
         actingPositionBasicSalary: z.number().positive("Basic salary must be positive").optional(),
         actingPositionGrossSalary: z.number().positive().optional().nullable(),
-        calculationMethod: z.enum(["AMOUNT", "PERCENTAGE"]).optional().default("PERCENTAGE"),
+        calculationMethod: z.enum(["PERCENTAGE", "FIXED_AMOUNT", "RULE_FIXED_AMOUNT"]).optional().default("PERCENTAGE"),
         fixedAmount: z.number().positive().optional().nullable(),
         startDate: z.string().refine((v) => !isNaN(Date.parse(v)), "Invalid start date"),
         payrollPeriodEndDate: z.string().refine((v) => !isNaN(Date.parse(v)), "Invalid period end date"),

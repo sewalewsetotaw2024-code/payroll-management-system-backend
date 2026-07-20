@@ -9,21 +9,19 @@ import httpStatus from "http-status";
 import * as morgan from "./config/morgan";
 import corsMiddleware from "./config/cors";
 import routes from "./routes";
-import payrollNotificationRoutes from "./routes/payrollNotification.routes";
+import { monitoring } from "./utils/monitoring";
 // ── Prisma Decimal serialisation ─────────────────────────────────────────────
 // Prisma 7's Decimal.toJSON() returns a string (e.g. "8.50"), which causes
 // JavaScript string concatenation when added in the frontend.  Override
 // to return a plain number so all API responses use numeric Decimals.
-void (async () => {
-    try {
-        // @ts-ignore
-        const { Decimal } = await import("@prisma/client/runtime/library.js");
-        // @ts-ignore – override Decimal.toJSON() to return number instead of string
-        Decimal.prototype.toJSON = function toJSON() { return Number(this); };
-    } catch {
-        // Runtime not available — the override is a safety net, not critical.
-    }
-})();
+try {
+    // @ts-ignore
+    const { Decimal } = await import("@prisma/client/runtime/library.js");
+    // @ts-ignore – override Decimal.toJSON() to return number instead of string
+    Decimal.prototype.toJSON = function toJSON() { return Number(this); };
+} catch {
+    // Runtime not available — the override is a safety net, not critical.
+}
 
 // Express application instance — all middleware and routes are registered on this
 const app = express();
@@ -71,9 +69,28 @@ app.get("/health", (_req: Request, res: Response) => {
     res.json({ status: "ok" });
 });
 
+app.get("/health/ready", (_req: Request, res: Response) => {
+    const snapshot = monitoring.getSnapshot();
+    const isReady = snapshot.dependencies.postgresql.status === "ok" && snapshot.dependencies.cloudinary.status === "ok";
+    res.status(isReady ? 200 : 503).json({
+        status: isReady ? "ready" : "not-ready",
+        snapshot,
+    });
+});
+
+app.get("/health/metrics", (_req: Request, res: Response) => {
+    res.json(monitoring.getSnapshot());
+});
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+    res.on("finish", () => {
+        monitoring.recordHttpRequest(req.method, req.path, res.statusCode || 500);
+    });
+    next();
+});
+
 // Mount versioned API routes before 404 handler
 app.use("/api/v1", routes);
-app.use("/api/v1/payroll-notifications", payrollNotificationRoutes);
 
 // Catch-all 404 handler for unmatched routes
 app.use((_req: Request, _res: Response, next: NextFunction) => {

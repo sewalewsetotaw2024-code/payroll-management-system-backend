@@ -18,7 +18,7 @@ import {
     updateWorkdaysSchema, patchWorkdaysSchema, saveWorkdaysSchema,
     activateFiscalYearSchema, closeFiscalYearSchema, openPayrollPeriodSchema, closePayrollPeriodSchema,
     createEmployeeDeductionSchema, updateEmployeeDeductionSchema, getEmployeeDeductionsSchema, recordPaymentSchema, bulkAssignEmployeeDeductionsSchema,
-    generateBatchesSchema, listBatchesByPeriodSchema, listBatchEmployeesSchema,
+    generateBatchesSchema, listBatchesByPeriodSchema, listBatchEmployeesSchema, moveBatchEmployeeSchema,
     createPayslipNotificationSettingsSchema, updatePayslipNotificationSettingsSchema, savePayslipNotificationSettingsSchema,
     createSystemCurrencySchema, updateSystemCurrencySchema, setBaseCurrencySchema,
     createCurrencyRateSchema, updateCurrencyRateSchema, saveCurrencyRateBatchSchema,
@@ -32,6 +32,12 @@ const router = Router();
  * GET /employees — Retrieves all employees for the authenticated company.
  */
 router.get("/employees", protect, requireAdmin, EmployeeController.getEmployees);
+
+/**
+ * GET /employees/export — Exports all matching employees to XLSX.
+ * Must be defined before /:id so "export" is not captured as an id parameter.
+ */
+router.get("/employees/export", protect, requireAdmin, EmployeeController.exportExcel);
 
 /**
  * GET /employees/:id — Retrieves a single employee by ID.
@@ -350,6 +356,17 @@ router.patch("/workdays-config", protect, requireAdmin, validate(patchWorkdaysSc
  */
 router.post("/workdays-config/save-configuration", protect, requireAdmin, validate(saveWorkdaysSchema), PayrollConfiguration.saveWorkdaysConfiguration);
 
+// DEDUCTION CAP ROUTES
+/**
+ * GET /configuration/deduction-cap — Retrieves the company-wide deduction cap percentage.
+ */
+router.get("/configuration/deduction-cap", protect, requireAdmin, PayrollConfiguration.getDeductionCap);
+
+/**
+ * PUT /configuration/deduction-cap — Updates the company-wide deduction cap percentage.
+ */
+router.put("/configuration/deduction-cap", protect, requireAdmin, PayrollConfiguration.updateDeductionCap);
+
 // ENUM LOOKUP ROUTES
 /**
  * GET /deduction-types — Retrieves the list of available deduction types.
@@ -438,6 +455,16 @@ router.get("/payroll-batch/employees", protect, requireAdmin, validate(listBatch
      * POST /payroll-batch/:id/archive — Archives a batch (CLOSED → ARCHIVED).
      */
     router.post("/payroll-batch/:id/archive", protect, requireAdmin, PayrollConfiguration.archiveBatch);
+
+/**
+ * DELETE /payroll-batch/employees/:id — Removes an employee from a batch.
+ */
+router.delete("/payroll-batch/employees/:id", protect, requireAdmin, PayrollConfiguration.removeBatchEmployee);
+
+/**
+ * PUT /payroll-batch/employees/:id/move — Moves an employee to another batch in the same period.
+ */
+router.put("/payroll-batch/employees/:id/move", protect, requireAdmin, validate(moveBatchEmployeeSchema), PayrollConfiguration.moveBatchEmployee);
 
 // =========================================================================
 // PAYSLIP NOTIFICATION SETTINGS ROUTES

@@ -24,6 +24,9 @@ export interface AppConfig {
         apiKey: string;
         apiSecret: string;
     };
+    puppeteer: {
+        executablePath: string;
+    };
     redis: {
         url: string;
         keyPrefix: string;

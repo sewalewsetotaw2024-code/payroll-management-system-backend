@@ -33,38 +33,9 @@ const TAX_BRACKETS_1395_2025 = [
 ];
 
 async function main() {
-  const requestedCompanyId = Number(process.env.DEFAULT_COMPANY_ID ?? 3);
-
-  let company = await prisma.company.findUnique({ where: { id: requestedCompanyId } });
-  if (!company) {
-    const matchingCompany = await prisma.company.findFirst({
-      where: {
-        OR: [
-          { code: { equals: process.env.COMPANY_CODE ?? "ADIU", mode: "insensitive" } },
-          { name: { contains: "ADIU", mode: "insensitive" } },
-        ],
-      },
-    });
-
-    if (matchingCompany) {
-      company = matchingCompany;
-      console.log(`Using existing matching company: ${company.name} (id: ${company.id})`);
-    } else {
-      company = await prisma.company.create({
-        data: {
-          id: requestedCompanyId,
-          name: process.env.COMPANY_NAME ?? "ADIU Communication Service PLC",
-          code: process.env.COMPANY_CODE ?? "ADIU",
-          isActive: true,
-        },
-      });
-      console.log(`Created company: ${company.name} (id: ${company.id})`);
-    }
-  } else {
-    console.log(`Using configured company: ${company.name} (id: ${company.id})`);
-  }
-
-  const companyId = company.id;
+  // IMPORTANT: Company ID must match the employee management system's company ID.
+  // Employee DB: SELECT id FROM company WHERE company_code = 'KACHA' → id = 2
+  const companyId = 2;
   const effectiveDate = new Date("2025-07-01T00:00:00.000Z");
 
   // ── Default Salary Structure ─────────────────────────────────────

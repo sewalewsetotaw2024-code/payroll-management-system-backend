@@ -2,15 +2,54 @@
 export const RoleNames = {
   SUPERADMIN: "Super Admin",
   ADMIN: "Admin",
-  HR: "HR",
-  HR_MANAGER: "HR Manager",
-  HR_OFFICER: "HR Officer",
-  PAYROLL_OFFICER: "Payroll Officer",
+  HR_GENERALIST: "HR Generalist",
+  HR_CS_MANAGER: "HR CS Manager",
+  HR_CS_DIRECTOR: "HR CS Director",
   FINANCE_MANAGER: "Finance Manager",
   FINANCE_OFFICER: "Finance Officer",
   DEPARTMENT_MANAGER: "Department Manager",
   EMPLOYEE: "Employee",
 } as const;
+
+/**
+ * REQUIRED_APPROVAL_ROLES
+ * ──────────────────────────
+ * Central registry of every role that the ApprovalWorkflowService depends on.
+ * Each entry lists the display-name aliases that the database's `AppRole.name`
+ * column may contain for that logical role.
+ *
+ * These exact names (or their listed aliases) MUST exist in the `AppRole` table
+ * BEFORE onboarding a new company or deploying changes that run workflow
+ * migration/seed logic.  If a role is missing:
+ *   - `getWorkflowForCompany` will log an APPROVAL_ROLE_MISSING error and
+ *     create a workflow with zero steps.
+ *   - Schema upgrades (v1→v2, v2→v3) will skip and remain stuck below their
+ *     target `schemaVersion`.
+ *   - `approveRequest` / `rejectRequest` will throw "No workflow steps
+ *     configured for stage …" at request time.
+ *
+ * Run `npm run validate:approval-roles` in CI or pre-deploy to catch missing
+ * roles before they reach production.
+ */
+export const REQUIRED_APPROVAL_ROLES: Record<string, string[]> = {
+  HR_CS_MANAGER:   ["HR CS Manager", "HR_CS_MANAGER", "hr_cs_manager", "HR Manager", "HR_MANAGER", "hr_manager"],
+  HR_CS_DIRECTOR:  ["HR CS Director", "HR_CS_DIRECTOR", "hr_cs_director"],
+  HR_GENERALIST:   ["HR Generalist", "HR_GENERALIST", "hr_generalist"],
+  FINANCE_MANAGER: ["Finance Manager", "FINANCE_MANAGER", "finance_manager"],
+  FINANCE_OFFICER: ["Finance Officer", "FINANCE_OFFICER", "finance_officer"],
+  ADMIN:           ["Admin", "admin", "ADMIN"],
+  // Legacy alias used by the v1→v2 migration (replaced by HR_CS_MANAGER in v3)
+  HR_MANAGER:      ["HR Manager", "HR_MANAGER", "hr_manager"],
+};
+
+/** Keys whose roles are considered critical — if missing, seeding and
+ *  migrations will silently skip, but the workflow will be stuck. */
+export const CRITICAL_APPROVAL_ROLES = [
+  "HR_CS_MANAGER",
+  "HR_CS_DIRECTOR",
+  "FINANCE_MANAGER",
+  "FINANCE_OFFICER",
+] as const;
 
 // Case-insensitive variants of the Super Admin role name for flexible matching
 export const SUPERADMIN_VARIANTS = [
@@ -48,15 +87,20 @@ export const RoleIds: Record<string, string> = {
   "2": "Admin",
   "6": "Admin",
   "10": "Admin",
-  "3": "HR",
-  "7": "HR",
-  "11": "HR",
-  // HR Officer
-  "13": "HR Officer",
-  // HR Manager
-  "14": "HR Manager",
-  // Finance Officer
+  "3": "HR Generalist",
+  "7": "HR",          // legacy HR role in DB
+  "11": "HR Generalist",
+  // HR CS Manager (DB id=14)
+  "13": "HR CS Manager",
+  "14": "HR CS Manager",
+  // HR CS Director (DB id=17)
+  "17": "HR CS Director",
+  // HR Generalist (DB id=18)
+  "18": "HR Generalist",
+  // Finance Officer (DB id=15)
   "15": "Finance Officer",
+  // Finance Manager (DB id=16)
+  "16": "Finance Manager",
   "4": "Employee",
   "8": "Employee",
   "12": "Employee",
@@ -72,28 +116,11 @@ export const roleKey = (name: string): string =>
  * their permissions seeded yet.
  */
 export const DEFAULT_PERMISSIONS: Record<string, Record<string, boolean>> = {
-  HR_OFFICER: {
+  HR_GENERALIST: {
     canActivateImport: true,
     canCalculateOt: true,
     canCalculateSummary: true,
     canApproveImport: true,
-    canRunPayroll: false,
-    canSyncLeave: true,
-    canReRunEmployee: true,
-    canSubmitForApproval: true,
-    canSubmitPayroll: true,
-    canApproveRun: false,
-    canRejectRun: false,
-    canSubmitPaymentFile: false,
-    canViewEmployeeDetail: true,
-    canApproveAttendance: false,
-    canRejectAttendance: false,
-  },
-  PAYROLL_OFFICER: {
-    canActivateImport: false,
-    canCalculateOt: true,
-    canCalculateSummary: true,
-    canApproveImport: false,
     canRunPayroll: true,
     canSyncLeave: true,
     canReRunEmployee: true,
@@ -105,6 +132,46 @@ export const DEFAULT_PERMISSIONS: Record<string, Record<string, boolean>> = {
     canViewEmployeeDetail: true,
     canApproveAttendance: false,
     canRejectAttendance: false,
+    canApprovePayment: false,
+    canRejectPayment: false,
+  },
+  HR_CS_MANAGER: {
+    canActivateImport: true,
+    canCalculateOt: true,
+    canCalculateSummary: true,
+    canApproveImport: true,
+    canRunPayroll: true,
+    canSyncLeave: true,
+    canReRunEmployee: true,
+    canSubmitForApproval: true,
+    canSubmitPayroll: true,
+    canApproveRun: true,
+    canRejectRun: true,
+    canSubmitPaymentFile: false,
+    canViewEmployeeDetail: true,
+    canApproveAttendance: true,
+    canRejectAttendance: true,
+    canApprovePayment: false,
+    canRejectPayment: false,
+  },
+  HR_CS_DIRECTOR: {
+    canActivateImport: false,
+    canCalculateOt: false,
+    canCalculateSummary: false,
+    canApproveImport: false,
+    canRunPayroll: false,
+    canSyncLeave: false,
+    canReRunEmployee: false,
+    canSubmitForApproval: false,
+    canSubmitPayroll: false,
+    canApproveRun: true,
+    canRejectRun: true,
+    canSubmitPaymentFile: false,
+    canViewEmployeeDetail: true,
+    canApproveAttendance: true,
+    canRejectAttendance: true,
+    canApprovePayment: false,
+    canRejectPayment: false,
   },
   FINANCE_MANAGER: {
     canActivateImport: false,
@@ -122,6 +189,8 @@ export const DEFAULT_PERMISSIONS: Record<string, Record<string, boolean>> = {
     canViewEmployeeDetail: true,
     canApproveAttendance: false,
     canRejectAttendance: false,
+    canApprovePayment: true,
+    canRejectPayment: true,
   },
   FINANCE_OFFICER: {
     canActivateImport: false,
@@ -135,27 +204,12 @@ export const DEFAULT_PERMISSIONS: Record<string, Record<string, boolean>> = {
     canSubmitPayroll: false,
     canApproveRun: false,
     canRejectRun: false,
-    canSubmitPaymentFile: false,
+    canSubmitPaymentFile: true,   // Finance Officer submits the payment file
     canViewEmployeeDetail: true,
     canApproveAttendance: false,
     canRejectAttendance: false,
-  },
-  HR_MANAGER: {
-    canActivateImport: false,
-    canCalculateOt: false,
-    canCalculateSummary: false,
-    canApproveImport: false,
-    canRunPayroll: false,
-    canSyncLeave: false,
-    canReRunEmployee: false,
-    canSubmitForApproval: false,
-    canSubmitPayroll: true,
-    canApproveRun: true,
-    canRejectRun: true,
-    canSubmitPaymentFile: false,
-    canViewEmployeeDetail: true,
-    canApproveAttendance: true,
-    canRejectAttendance: true,
+    canApprovePayment: false,     // Finance MANAGER approves
+    canRejectPayment: false,
   },
   DEPARTMENT_MANAGER: {
     canActivateImport: false,
@@ -173,6 +227,8 @@ export const DEFAULT_PERMISSIONS: Record<string, Record<string, boolean>> = {
     canViewEmployeeDetail: true,
     canApproveAttendance: true,
     canRejectAttendance: true,
+    canApprovePayment: false,
+    canRejectPayment: false,
   },
   ADMIN: {
     canActivateImport: true,
@@ -190,6 +246,8 @@ export const DEFAULT_PERMISSIONS: Record<string, Record<string, boolean>> = {
     canViewEmployeeDetail: true,
     canApproveAttendance: true,
     canRejectAttendance: true,
+    canApprovePayment: true,
+    canRejectPayment: true,
   },
 };
 

@@ -167,11 +167,12 @@ function calculatePension(
 }
 
 /**
- * Validate the 1/3 deduction cap.
- * Returns true if totalDeductions > basicSalary / 3.
+ * Validate the deduction cap.
+ * Returns true if totalDeductions > basicSalary * capPercent / 100.
+ * @param capPercent — The cap percentage (e.g. 33.33 for 1/3).
  */
-function isDeductionCapBreached(totalDeductions: Decimal, basicSalary: Decimal): boolean {
-    return totalDeductions.gt(basicSalary.div(3));
+function isDeductionCapBreached(totalDeductions: Decimal, basicSalary: Decimal, capPercent: number): boolean {
+    return totalDeductions.gt(basicSalary.mul(capPercent).div(100));
 }
 
 // ── Allowance mapping ────────────────────────────────────────
@@ -222,6 +223,7 @@ interface PayrollRunConfig {
     pensionRule: { basis: PensionBasis; employeeRate: Decimal; employerRate: Decimal };
     overtimeRules: Map<OvertimeCategory, OvertimeRuleConfig>;
     allowanceConfigs: { earningType: EarningType; label: string; isTaxable: boolean; isExempt: boolean; exemptPercent: Decimal | null }[];
+    capPercentage: number;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -264,14 +266,23 @@ export class PayrollRunService {
      * @throws {CustomError} If no tax brackets are configured.
      */
     async loadTaxBrackets(companyId: number): Promise<(TaxBracketConfig & { id: string })[]> {
+        const now = new Date();
         const brackets = await prisma.taxBracket.findMany({
-            where: { companyId, isActive: { not: false } },
+            where: {
+                companyId,
+                isActive: { not: false },
+                effectiveDate: { lte: now },
+                OR: [
+                    { expiryDate: null },
+                    { expiryDate: { gte: now } },
+                ],
+            },
             orderBy: { lowerBound: "asc" },
         });
         if (brackets.length === 0) {
             throw new CustomError(
                 httpStatus.BAD_REQUEST,
-                "No tax brackets configured. Go to Configuration > Tax Brackets and add tax brackets before running payroll.",
+                "No active tax brackets found for the current date. Go to Configuration > Tax Brackets and ensure brackets have valid effective/expiry dates before running payroll.",
             );
         }
         return brackets.map((b) => ({
@@ -589,7 +600,7 @@ export class PayrollRunService {
     ): Promise<RunItemInput> {
         logger.info({ employeeId: employee.id, payrollRunItemId }, "Calculating employee payroll");
 
-        const { workdays, taxBrackets, pensionRule, overtimeRules, allowanceConfigs } = config;
+        const { workdays, taxBrackets, pensionRule, overtimeRules, allowanceConfigs, capPercentage } = config;
         const basicSalary = new Prisma.Decimal(employee.compensation?.basicSalary?.toString() ?? "0");
 
         // ══════════════════════════════════════════════════════════════════════════════
@@ -776,7 +787,7 @@ export class PayrollRunService {
             if (!assignment.actingAllowanceRule) continue;
 
             const rule = assignment.actingAllowanceRule;
-            const method = rule.calculationMethod as 'AMOUNT' | 'PERCENTAGE';
+            const method = rule.calculationMethod as 'PERCENTAGE' | 'FIXED_AMOUNT' | 'RULE_FIXED_AMOUNT';
 
             // Determine the correct salary to compare based on the rule's basis
             // BASIC_DIFF → compare basic salaries; GROSS_DIFF → compare gross salaries
@@ -823,11 +834,18 @@ export class PayrollRunService {
                     isProrated: false,
                     proratedDays: null,
                 });
-            } else if (method === 'AMOUNT') {
+            } else if (method === 'FIXED_AMOUNT' || method === 'RULE_FIXED_AMOUNT') {
                 // Fixed-amount method: the allowance is the actingPositionSalary stored
-                // on the assignment (set during create/edit). No difference computation —
-                // the amount is already final. The rule's `basis` does not apply here.
-                const fixedAmt = new Prisma.Decimal(assignment.actingPositionSalary?.toString() ?? '0');
+                // on the assignment (set during create/edit rule creation).
+                //
+                // FIXED_AMOUNT: actingPositionSalary was set per-assignment from salary diff
+                // RULE_FIXED_AMOUNT: actingPositionSalary was populated from rule.fixedAmount
+                const fixedAmt = method === 'RULE_FIXED_AMOUNT'
+                    ? new Prisma.Decimal(rule.fixedAmount?.toString() ?? '0')
+                    : new Prisma.Decimal(assignment.actingPositionSalary?.toString() ?? '0');
+                const label = method === 'RULE_FIXED_AMOUNT'
+                    ? `Acting Allowance: ${assignment.actingPosition?.title || 'Acting Role'} (Rule Fixed)`
+                    : `Acting Allowance: ${assignment.actingPosition?.title || 'Acting Role'}`;
                 if (fixedAmt.gt(0)) {
                     // Apply proration — spec: "apply the same attendance ratio to ALL components"
                     const proratedAmount = prorationFactor.lt(1)
@@ -835,7 +853,7 @@ export class PayrollRunService {
                         : fixedAmt;
                     employeeAllowances.push({
                         earningType: "ACTING_ALLOWANCE" as EarningType,
-                        label: `Acting Allowance: ${assignment.actingPosition?.title || 'Acting Role'}`,
+                        label,
                         amount: proratedAmount,
                         isTaxable: true,
                         isExempt: false,
@@ -972,15 +990,24 @@ export class PayrollRunService {
             return sum;
         }, new Prisma.Decimal(0));
 
-        // Apply fixed non-taxable transport exemption ( Ethiopian law: 600 ETB/month )
-        // Only applies if the employee actually receives a transportation allowance.
-        // Reuse prorationFactor already computed (attendance-based or hire-date-based)
-        const hasTransportAllowance = employeeAllowances.some(
+        // Transport exemption: depends on the contractual (full) allowance amount.
+        //   ≤ 2,000  → the full prorated amount is non-taxable
+        //   > 2,000  → fixed 600 ETB exemption (prorated by days worked)
+        // The threshold uses the full/contractual amount, not the prorated amount.
+        const transportAllowanceRecord = employee.allowances?.find(
+            (a: any) => a.allowanceType === AllowanceTypeConst.TRANSPORTATION,
+        );
+        const fullTransportAmount = transportAllowanceRecord?.amount
+            ? new Prisma.Decimal(transportAllowanceRecord.amount.toString())
+            : new Prisma.Decimal(0);
+
+        const proratedTransportAllowance = employeeAllowances.find(
             (a) => a.earningType.includes('TRANSPORT'),
         );
-        const transportExemption = hasTransportAllowance
-            ? new Prisma.Decimal(workdays.nonTaxableTransportExemption).mul(prorationFactor)
-            : new Prisma.Decimal(0);
+
+        const transportExemption: Prisma.Decimal = fullTransportAmount.lte(2000)
+            ? (proratedTransportAllowance?.amount ?? new Prisma.Decimal(0))
+            : new Prisma.Decimal(workdays.nonTaxableTransportExemption).mul(prorationFactor);
 
         // grossTaxableIncome starts from the same base as grossSalary but swaps
         // manualAdjustmentTotal (all) for taxableAdjustmentTotal (taxable only),
@@ -1028,8 +1055,12 @@ export class PayrollRunService {
         //   pensionBase = 50,000 (basic only)
         //   employeeContribution = 50,000 × 0.07 = 3,500.00
         //   employerContribution = 50,000 × 0.11 = 5,500.00
+        //
+        // If pensionElig is false, skip pension entirely (contributions = 0).
+        // pensionElig defaults to true when not synced from the employee management system.
         // ══════════════════════════════════════════════════════════════════════════════
-        const pensionBase = proratedSalary;
+        const isPensionEligible = employee.compensation?.pensionElig ?? true;
+        const pensionBase = isPensionEligible ? proratedSalary : new Prisma.Decimal(0);
         const { employeeContribution, employerContribution } = calculatePension(
             pensionBase,
             pensionRule.employeeRate,
@@ -1057,7 +1088,12 @@ export class PayrollRunService {
 
                 case $Enums.DeductionCalculationType.PERCENTAGE_OF_BASIC: {
                     const pct = new Prisma.Decimal(d.percent?.toString() ?? "0");
-                    periodAmount = basicSalary.mul(pct).div(100);
+                    // Cost Sharing is calculated on prorated Basic Earnings (worked days),
+                    // while other percentage-of-basic deductions use full contractual salary.
+                    const base = d.deductionType === $Enums.DeductionType.COST_SHARING
+                        ? proratedSalary
+                        : basicSalary;
+                    periodAmount = base.mul(pct).div(100);
                     break;
                 }
 
@@ -1108,7 +1144,7 @@ export class PayrollRunService {
             .add(deductionTotal)
             .toDecimalPlaces(2, Prisma.Decimal.ROUND_HALF_UP);
 
-        const deductionCapBreached = isDeductionCapBreached(totalDeductions, basicSalary);
+        const deductionCapBreached = isDeductionCapBreached(totalDeductions, basicSalary, capPercentage);
 
         // ══════════════════════════════════════════════════════════════════════════════
         // STEP 12: COST TO COMPANY & NET PAY
@@ -1407,14 +1443,18 @@ export class PayrollRunService {
         const isReRunOnFirstPage = !!existingRun && page <= 1;
 
         // Load configs (unconditionally needed for per-employee calculation)
-        const [workdays, taxBrackets, pensionRules, overtimeRules, allowanceConfigs] =
+        const [workdays, taxBrackets, pensionRules, overtimeRules, allowanceConfigs, capConfig] =
             await Promise.all([
                 this.loadWorkdaysConfig(companyId),
                 this.loadTaxBrackets(companyId),
                 this.loadPensionRules(companyId),
                 this.loadOvertimeRules(companyId),
                 this.loadAllowanceConfigs(companyId),
+                prisma.configuration.findUnique({
+                    where: { companyId_key: { companyId, key: 'DEDUCTION_CAP_PERCENTAGE' } },
+                }),
             ]);
+        const deductionCapPercent = capConfig ? parseFloat(capConfig.value) : 33.33;
 
         // Load employees — if employeeId provided, load only that employee;
         // if batchId provided, load only batch employees; otherwise use the active import's employees
@@ -1425,8 +1465,16 @@ export class PayrollRunService {
         // Find the active attendance import for this period (used for employee filtering)
         const activeImport = await prisma.attendanceImport.findFirst({
             where: { payrollPeriodId, isActive: true },
-            select: { id: true, totalEmployees: true, processedAt: true },
+            select: { id: true, totalEmployees: true, processedAt: true, status: true },
         });
+
+        // Block payroll processing if the active attendance import hasn't been approved
+        if (activeImport && activeImport.status !== "APPROVED") {
+            throw new CustomError(
+                httpStatus.BAD_REQUEST,
+                `Attendance data for this period has not been approved yet. Please complete the attendance approval workflow before processing payroll.`,
+            );
+        }
 
         // Block re-processing of already-processed imports
         // Batches and single-employee mode are exempt — they can run independently
@@ -1442,7 +1490,7 @@ export class PayrollRunService {
             const singleEmployee = await prisma.employee.findFirst({
                 where: { id: employeeId, status: "ACTIVE" },
                 include: {
-                    compensation: { select: { basicSalary: true, grossSalary: true } },
+                    compensation: { select: { basicSalary: true, grossSalary: true, pensionElig: true } },
                     allowances: true,
                 },
             });
@@ -1465,7 +1513,7 @@ export class PayrollRunService {
                 skip,
                 take: limit,
                 include: {
-                    compensation: { select: { basicSalary: true, grossSalary: true } },
+                    compensation: { select: { basicSalary: true, grossSalary: true, pensionElig: true } },
                     allowances: true,
                 },
             });
@@ -1498,7 +1546,7 @@ export class PayrollRunService {
                 skip,
                 take: limit,
                 include: {
-                    compensation: { select: { basicSalary: true, grossSalary: true } },
+                    compensation: { select: { basicSalary: true, grossSalary: true, pensionElig: true } },
                     allowances: { where: { isActive: true } },
                 },
                 orderBy: { firstName: "asc" },
@@ -1578,6 +1626,7 @@ export class PayrollRunService {
             pensionRule,
             overtimeRules,
             allowanceConfigs,
+            capPercentage: deductionCapPercent,
         };
 
         const data = { employeeDeductionsMap, overtimeRecordsMap, manualAdjustmentsByEmployee, actingAssignmentsMap, attendanceWorkdaysMap };
@@ -2033,6 +2082,77 @@ export class PayrollRunService {
             },
         });
         return run;
+    }
+
+    /**
+     * Retrieves per-employee payroll statistics for a given payroll period.
+     * Returns one row per employee with grossPay, deductions, tax, pension, netPay.
+     */
+    async getEmployeeStats(companyId: number, payrollPeriodId: string) {
+        const runItems = await prisma.payrollRunItem.findMany({
+            where: {
+                payrollRun: {
+                    payrollPeriodId,
+                    payrollPeriod: { companyId },
+                },
+            },
+            include: {
+                employee: {
+                    select: {
+                        id: true,
+                        firstName: true,
+                        lastName: true,
+                        externalId: true,
+                        jobPosition: true,
+                        department: { select: { name: true } },
+                    },
+                },
+                payrollTax: {
+                    select: { taxAmount: true },
+                },
+                payrollPension: {
+                    select: { employeeContribution: true },
+                },
+            },
+            orderBy: { employee: { firstName: "asc" } },
+        });
+
+        // Deduplicate by employee ID — if the same employee appears in multiple
+        // runs (e.g. different batches within the same period), keep the first.
+        const seen = new Set<string>();
+        return runItems.reduce<Array<{
+            employeeName: string;
+            externalId: string;
+            position: string;
+            department: string;
+            workDays: number;
+            basicSalary: number;
+            grossPay: number;
+            totalDeductions: number;
+            tax: number;
+            pension: number;
+            costToCompany: number;
+            netPay: number;
+        }>>((acc, item) => {
+            const empId = item.employee.id;
+            if (seen.has(empId)) return acc;
+            seen.add(empId);
+            acc.push({
+                employeeName: `${item.employee.firstName} ${item.employee.lastName}`.trim(),
+                externalId: item.employee.externalId ?? "",
+                position: item.employee.jobPosition ?? "",
+                department: item.employee.department?.name ?? "",
+                workDays: Number(item.workDays) || 0,
+                basicSalary: Number(item.basicSalary) || 0,
+                grossPay: Number(item.grossSalary) || 0,
+                totalDeductions: Number(item.totalDeductions) || 0,
+                tax: Number(item.payrollTax?.taxAmount) || 0,
+                pension: Number(item.payrollPension?.employeeContribution) || 0,
+                costToCompany: Number(item.costToCompany) || 0,
+                netPay: Number(item.netSalary) || 0,
+            });
+            return acc;
+        }, []);
     }
 }
 

@@ -19,6 +19,18 @@ router.get(
 );
 
 /**
+ * GET /employees/export — Export all matching employees to XLSX.
+ * IMPORTANT: This route MUST be defined before /:id to prevent
+ * Express from matching "export" as an :id parameter.
+ */
+router.get(
+    "/export",
+    protect,
+    requireAdmin,
+    EmployeeController.exportExcel,
+);
+
+/**
  * GET /employees/:id — Get a single employee by ID.
  */
 router.get(
