@@ -20,7 +20,7 @@
 
 import prisma from "../config/database";
 import { Prisma } from "../generated/prisma";
-import { externalApiClient } from "./sync/externalApiClient";
+import { externalApiClient, ExternalLeaveApplication } from "./sync/externalApiClient";
 import config from "../config/env";
 import logger from "../utils/logger";
 
@@ -170,7 +170,7 @@ export class LeavePeriodService {
     const startStr = periodStart.toISOString().split("T")[0];
     const endStr = periodEnd.toISOString().split("T")[0];
 
-    let applications;
+    let applications: ExternalLeaveApplication[] = [];
     try {
       applications = await externalApiClient.getLeaveApplications(
         apiToken,
@@ -189,14 +189,17 @@ export class LeavePeriodService {
     if (applications.length === 0) return [];
 
     // Collect unique employee external IDs from the leave applications
-    const employeeIds = [...new Set(applications.map((a) => a.employee_id))];
+    const employeeIds = Array.from(
+      new Set(applications.map((a) => a.employee_id)),
+    );
 
     // Fetch basic salaries from locally-synced EmployeeCompensation table
     const employees = await this.prisma.employee.findMany({
       where: { externalId: { in: employeeIds } },
-      select: {
-        externalId: true,
-        compensation: { select: { basicSalary: true } },
+      include: {
+        compensation: {
+          select: { basicSalary: true },
+        },
       },
     });
 
