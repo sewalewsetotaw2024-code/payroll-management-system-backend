@@ -1,6 +1,8 @@
 import prisma from "../config/database";
 import logger from "../utils/logger";
 import { broadcastToUser } from "./websocket.service";
+import { enqueueEmail } from "../queues/email.queue";
+import type { EmailJobData } from "../config/email";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -14,15 +16,15 @@ export interface CreateNotificationData {
   category?: NotificationCategory;
   referenceId?: string;
   link?: string;
+  /** Extra data for email templates (e.g., submitterName, periodName, reason) */
+  emailData?: Record<string, string | number>;
 }
 
 // ── Service ──────────────────────────────────────────────────────────────────
 
 class NotificationService {
   /**
-   * Create a notification, persist it, and push it to the recipient in real time
-   * over WebSocket.  If the user is offline, the notification stays in the DB
-   * for later retrieval.
+   * Create a notification, persist it, push via WebSocket, and enqueue an email.
    */
   async create(data: CreateNotificationData) {
     const notification = await prisma.appNotification.create({
@@ -49,7 +51,60 @@ class NotificationService {
       logger.warn({ err }, "[Notification] WebSocket broadcast failed (non-blocking)");
     }
 
+    // Enqueue email — non-blocking; failure does not affect in-app notification.
+    try {
+      await this.enqueueEmailForNotification(data);
+    } catch (err) {
+      logger.warn({ err }, "[Notification] Email enqueue failed (non-blocking)");
+    }
+
     return notification;
+  }
+
+  /**
+   * Look up recipient email and enqueue an email job.
+   * Skips if recipient has no email address.
+   */
+  private async enqueueEmailForNotification(data: CreateNotificationData) {
+    // Look up recipient email from AppUser + Employee (no relation — query separately)
+    const user = await prisma.appUser.findUnique({
+      where: { id: data.recipientId },
+      select: { email: true },
+    });
+
+    if (!user) {
+      logger.warn({ recipientId: data.recipientId }, "[Notification] User not found, skipping email");
+      return;
+    }
+
+    // Employee is linked by userId (no Prisma relation on AppUser)
+    const employee = await prisma.employee.findFirst({
+      where: { userId: data.recipientId },
+      select: { firstName: true, lastName: true, email: true },
+    });
+
+    const email = user.email || employee?.email;
+    if (!email) {
+      logger.warn({ recipientId: data.recipientId }, "[Notification] No email address, skipping email");
+      return;
+    }
+
+    const recipientName = employee
+      ? `${employee.firstName} ${employee.lastName}`
+      : `User #${data.recipientId}`;
+
+    const jobData: EmailJobData = {
+      to: email,
+      recipientName,
+      subject: data.title,
+      notificationType: data.type,
+      templateData: {
+        recipientName,
+        ...data.emailData,
+      },
+    };
+
+    await enqueueEmail(jobData);
   }
 
   /**

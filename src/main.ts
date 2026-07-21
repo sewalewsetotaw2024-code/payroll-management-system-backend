@@ -7,6 +7,7 @@ import { connectRedis, disconnectRedis } from "./config/redis";
 import { initializeWebSocket, shutdownWebSocket } from "./services/websocket.service";
 import { payslipRenderService } from "./services/payslipRender.service";
 import { startWorker as startReportWorker, shutdownQueue } from "./services/reportQueue.service";
+import { startEmailWorker, stopEmailWorker } from "./workers/email.processor";
 import logger from "./utils/logger";
 import { logApprovalRoleHealth } from "./utils/approvalRoleValidator";
 import { monitoring } from "./utils/monitoring";
@@ -88,6 +89,7 @@ async function shutdown(exitCode = 0): Promise<void> {
     await disconnectRedis();
     await shutdownWebSocket();
     await shutdownQueue();
+    await stopEmailWorker();
     await payslipRenderService.shutdown();
     process.exit(exitCode);
 }
@@ -130,6 +132,8 @@ async function bootstrap(): Promise<void> {
             monitoring.setDependencyStatus("redis", "ok", "Connected");
             // Start BullMQ worker for background report generation
             startReportWorker();
+            // Start email worker for async email sending via Resend
+            startEmailWorker();
         })
         .catch((err) => {
             monitoring.setDependencyStatus("redis", "degraded", err instanceof Error ? err.message : "Unknown error");

@@ -41,6 +41,7 @@ const envSchema = z.object({
     SMTP_USER: z.string().optional(),
     SMTP_PASS: z.string().optional(),
     EMAIL_FROM: z.string().default("noreply@adiu.com"),
+    RESEND_API_KEY: z.string().optional(),
 });
 
 const parsedEnv = envSchema.safeParse(process.env);

@@ -467,7 +467,7 @@ export const AttendanceController = {
         const request = await approvalWorkflowService.requestApproval(
             companyId,
             Number(userId),
-            "PAYROLL_DOCUMENT",
+            "ATTENDANCE",
             "ATTENDANCE_IMPORT",
             undefined,
             importId,

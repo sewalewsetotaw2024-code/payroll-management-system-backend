@@ -130,6 +130,11 @@ export class PayslipService {
         for (const item of runItems) {
             const periodId = item.payrollRun.payrollPeriodId;
             const ps = payslipMap.get(item.id);
+
+            // For non-HR users: skip items with no payslip (DRAFT filtered out)
+            // This prevents periods from appearing when all payslips are still DRAFT
+            if (!isHrRole && !ps) continue;
+
             const candidate = {
                 runItemId: item.id,
                 payslipId: ps?.payslipId ?? null,

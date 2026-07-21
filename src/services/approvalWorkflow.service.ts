@@ -878,6 +878,28 @@ export class ApprovalWorkflowService {
     // ── Notification hooks ──
     if (attendanceImportId && referenceType === "ATTENDANCE_IMPORT") {
       try {
+        // Get submitter name for email (AppUser has no employee relation — query separately)
+        const submitterUser = await prisma.appUser.findUnique({
+          where: { id: userId },
+          select: { id: true },
+        });
+        const submitterEmployee = submitterUser
+          ? await prisma.employee.findFirst({
+              where: { userId: submitterUser.id },
+              select: { firstName: true, lastName: true },
+            })
+          : null;
+        const submitterName = submitterEmployee
+          ? `${submitterEmployee.firstName} ${submitterEmployee.lastName}`
+          : `User #${userId}`;
+
+        // Get import period label for email (AttendanceImport has no importMonth/importYear)
+        const attendanceImport = await prisma.attendanceImport.findUnique({
+          where: { id: attendanceImportId },
+          select: { periodLabel: true },
+        });
+        const importMonth = attendanceImport?.periodLabel ?? undefined;
+
         const hrManagerRole = await prisma.appRole.findFirst({
           where: { name: { in: REQUIRED_APPROVAL_ROLES.HR_CS_MANAGER } },
         });
@@ -894,6 +916,7 @@ export class ApprovalWorkflowService {
               category: "attendance",
               referenceId: attendanceImportId,
               link: "/approval",
+              emailData: { submitterName, importMonth: importMonth || "N/A" },
             });
           }
         }
@@ -1173,8 +1196,9 @@ export class ApprovalWorkflowService {
             });
           }
 
-          // When PayrollRun transitions to APPROVED or DONE, mark all payslips as DONE
-          if (newPayrollStatus === PayrollStatusConst.APPROVED || newPayrollStatus === PayrollStatusConst.DONE) {
+          // When PayrollRun transitions to DONE (payment fully approved), mark all payslips as DONE
+          // NOTE: payslips stay DRAFT while status is APPROVED (payroll approved but payment not yet)
+          if (newPayrollStatus === PayrollStatusConst.DONE) {
             if (anchorRun?.payrollPeriodId) {
               // Update payslips for all runs in the period that match the new status
               await tx.payslip.updateMany({
@@ -1229,6 +1253,13 @@ export class ApprovalWorkflowService {
     // ── Notification hooks (non-blocking — errors logged but not thrown) ──
     if (result?.attendanceImportId) {
       try {
+        // Get import period label for email
+        const attendanceImport = await prisma.attendanceImport.findUnique({
+          where: { id: result.attendanceImportId },
+          select: { periodLabel: true },
+        });
+        const importMonth = attendanceImport?.periodLabel ?? undefined;
+
         await notificationService.create({
           recipientId: Number(result.requestedBy),
           type: "ATTENDANCE_APPROVED",
@@ -1237,6 +1268,7 @@ export class ApprovalWorkflowService {
           category: "attendance",
           referenceId: result.attendanceImportId,
           link: "/approval",
+          emailData: { importMonth: importMonth || "N/A" },
         });
       } catch (err) {
         logger.error(err, "[ApprovalWorkflow] Failed to send approve notification");
@@ -1246,6 +1278,25 @@ export class ApprovalWorkflowService {
     // ── Payroll approval notifications ──
     if (result?.stageType === ApprovalStageTypeConst.PAYROLL_APPROVAL && !result?.attendanceImportId) {
       try {
+        // Get period name for email
+        let periodName: string | undefined;
+        if (result.payrollRunId) {
+          const run = await prisma.payrollRun.findUnique({
+            where: { id: result.payrollRunId },
+            select: { payrollPeriod: { select: { name: true } } },
+          });
+          periodName = run?.payrollPeriod?.name ?? undefined;
+        }
+
+        // Get submitter name for email (AppUser has no employee relation)
+        const submitterEmployee = await prisma.employee.findFirst({
+          where: { userId: Number(result.requestedBy) },
+          select: { firstName: true, lastName: true },
+        });
+        const submitterName = submitterEmployee
+          ? `${submitterEmployee.firstName} ${submitterEmployee.lastName}`
+          : `User #${result.requestedBy}`;
+
         const approvedRoleIds = new Set<number>(
           (result.approvalActions ?? [])
             .filter((a) => a.action === "APPROVED")
@@ -1276,6 +1327,7 @@ export class ApprovalWorkflowService {
             category: "payroll",
             referenceId: result.payrollRunId ?? undefined,
             link: "/payroll",
+            emailData: { periodName: periodName || "N/A" },
           });
         } else {
           // Notify finance users by role name — no hardcoded IDs
@@ -1298,6 +1350,7 @@ export class ApprovalWorkflowService {
                 category: "payroll",
                 referenceId: result.payrollRunId ?? undefined,
                 link: "/approval",
+                emailData: { submitterName, periodName: periodName || "N/A" },
               });
             }
           }
@@ -1335,6 +1388,68 @@ export class ApprovalWorkflowService {
               .catch((err: any) => {
                 logger.error({ err, runId: run.id }, "[Payslip] Auto-generation failed for run");
               });
+          }
+
+          // Send PAYSLIP_READY notifications to employees
+          try {
+            // Get period name
+            const period = await prisma.payrollPeriod.findUnique({
+              where: { id: anchorRun.payrollPeriodId },
+              select: { name: true },
+            });
+
+            // Get all payslips that just became DONE — include PayrollRunItem for salary info
+            const readyPayslips = await prisma.payslip.findMany({
+              where: {
+                payrollRunItem: {
+                  payrollRun: {
+                    payrollPeriodId: anchorRun.payrollPeriodId,
+                    status: PayrollStatusConst.DONE,
+                  },
+                },
+                visibilityStatus: "DONE",
+              },
+              include: {
+                payrollRunItem: {
+                  select: {
+                    netSalary: true,
+                    currency: true,
+                    employeeId: true,
+                  },
+                },
+              },
+            });
+
+            for (const payslip of readyPayslips) {
+              // Employee has no Prisma user relation — look up AppUser by userId
+              const employee = await prisma.employee.findUnique({
+                where: { id: payslip.payrollRunItem.employeeId },
+                select: { userId: true, firstName: true, lastName: true },
+              });
+              if (!employee?.userId) continue;
+
+              await notificationService.create({
+                recipientId: employee.userId,
+                type: "PAYSLIP_READY",
+                title: "Your Payslip is Ready!",
+                message: `Your payslip for ${period?.name || "the current period"} has been processed and is available for download.`,
+                category: "payslip",
+                referenceId: payslip.id,
+                link: "/payslips",
+                emailData: {
+                  periodName: period?.name || "N/A",
+                  netSalary: payslip.payrollRunItem?.netSalary?.toString() || "0",
+                  currency: payslip.payrollRunItem?.currency || "ETB",
+                },
+              });
+            }
+
+            logger.info(
+              { count: readyPayslips.length, periodId: anchorRun.payrollPeriodId },
+              "[ApprovalWorkflow] Sent PAYSLIP_READY notifications",
+            );
+          } catch (err) {
+            logger.error(err, "[ApprovalWorkflow] Failed to send PAYSLIP_READY notifications");
           }
         }
       } catch (err) {
@@ -1581,6 +1696,13 @@ export class ApprovalWorkflowService {
     // ── Notification hooks (non-blocking) ──
     if (result?.attendanceImportId) {
       try {
+        // Get import period label for email
+        const attendanceImport = await prisma.attendanceImport.findUnique({
+          where: { id: result.attendanceImportId },
+          select: { periodLabel: true },
+        });
+        const importMonth = attendanceImport?.periodLabel ?? undefined;
+
         await notificationService.create({
           recipientId: Number(result.requestedBy),
           type: "ATTENDANCE_REJECTED",
@@ -1589,6 +1711,7 @@ export class ApprovalWorkflowService {
           category: "attendance",
           referenceId: result.attendanceImportId,
           link: "/approval",
+          emailData: { importMonth: importMonth || "N/A", reason: comment || "No reason provided" },
         });
       } catch (err) {
         logger.error(err, "[ApprovalWorkflow] Failed to send reject notification");
@@ -1598,6 +1721,16 @@ export class ApprovalWorkflowService {
     // ── Payroll rejection notification ──
     if (result?.stageType === ApprovalStageTypeConst.PAYROLL_APPROVAL && !result?.attendanceImportId) {
       try {
+        // Get period name for email
+        let periodName: string | undefined;
+        if (result.payrollRunId) {
+          const run = await prisma.payrollRun.findUnique({
+            where: { id: result.payrollRunId },
+            select: { payrollPeriod: { select: { name: true } } },
+          });
+          periodName = run?.payrollPeriod?.name ?? undefined;
+        }
+
         await notificationService.create({
           recipientId: Number(result.requestedBy),
           type: "PAYROLL_REJECTED",
@@ -1606,6 +1739,7 @@ export class ApprovalWorkflowService {
           category: "payroll",
           referenceId: result.payrollRunId ?? undefined,
           link: "/payroll",
+          emailData: { periodName: periodName || "N/A", reason: comment || "No reason provided" },
         });
       } catch (err) {
         logger.error(err, "[ApprovalWorkflow] Failed to send payroll rejection notification");
