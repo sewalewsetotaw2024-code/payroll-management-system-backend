@@ -44,6 +44,9 @@ CREATE TYPE "PayrollPeriodStatus" AS ENUM ('DRAFT', 'ACTIVE', 'DONE');
 CREATE TYPE "ApprovalStatus" AS ENUM ('PENDING', 'APPROVED', 'REJECTED', 'OVERRIDDEN');
 
 -- CreateEnum
+CREATE TYPE "PayslipVisibilityStatus" AS ENUM ('DRAFT', 'DONE');
+
+-- CreateEnum
 CREATE TYPE "AttendanceNotificationType" AS ENUM ('ATTENDANCE_SUBMITTED', 'ATTENDANCE_APPROVED', 'ATTENDANCE_REJECTED');
 
 -- CreateEnum
@@ -74,7 +77,7 @@ CREATE TYPE "AttendanceSource" AS ENUM ('ZK_BIOMETRIC', 'MANUAL');
 CREATE TYPE "PensionBasis" AS ENUM ('BASIC', 'GROSS');
 
 -- CreateEnum
-CREATE TYPE "CalculationMethod" AS ENUM ('AMOUNT', 'PERCENTAGE');
+CREATE TYPE "CalculationMethod" AS ENUM ('PERCENTAGE', 'FIXED_AMOUNT', 'RULE_FIXED_AMOUNT');
 
 -- CreateEnum
 CREATE TYPE "ActingAllowanceBasis" AS ENUM ('BASIC_DIFF', 'GROSS_DIFF');
@@ -904,6 +907,8 @@ CREATE TABLE "AttendanceImport" (
     "isActive" BOOLEAN NOT NULL DEFAULT false,
     "processedAt" TIMESTAMP(3),
     "fileReference" TEXT,
+    "fileHash" TEXT,
+    "sizeBytes" INTEGER NOT NULL DEFAULT 0,
     "recordCount" INTEGER NOT NULL DEFAULT 0,
     "errorDetails" TEXT,
     "periodLabel" TEXT,
@@ -1037,6 +1042,7 @@ CREATE TABLE "PayslipTemplate" (
     "companyId" INTEGER NOT NULL,
     "name" TEXT NOT NULL,
     "companyLogo" TEXT,
+    "templateUrl" TEXT,
     "language" TEXT NOT NULL DEFAULT 'en',
     "customFields" JSONB,
     "isDefault" BOOLEAN NOT NULL DEFAULT false,
@@ -1056,6 +1062,10 @@ CREATE TABLE "Payslip" (
     "emailSentAt" TIMESTAMP(3),
     "emailStatus" "EmailStatus" NOT NULL DEFAULT 'PENDING',
     "emailRetryCount" INTEGER NOT NULL DEFAULT 0,
+    "generationStatus" TEXT NOT NULL DEFAULT 'PENDING',
+    "errorMessage" TEXT,
+    "retryCount" INTEGER NOT NULL DEFAULT 0,
+    "visibilityStatus" "PayslipVisibilityStatus" NOT NULL DEFAULT 'DRAFT',
 
     CONSTRAINT "Payslip_pkey" PRIMARY KEY ("id")
 );
@@ -1135,6 +1145,7 @@ CREATE TABLE "ApprovalWorkflow" (
     "companyId" INTEGER NOT NULL,
     "name" TEXT NOT NULL,
     "description" TEXT,
+    "schemaVersion" INTEGER NOT NULL DEFAULT 1,
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -1543,6 +1554,22 @@ CREATE TABLE "PayrollBatchEmployee" (
     CONSTRAINT "PayrollBatchEmployee_pkey" PRIMARY KEY ("id")
 );
 
+-- CreateTable
+CREATE TABLE "AppNotification" (
+    "id" TEXT NOT NULL,
+    "recipientId" INTEGER NOT NULL,
+    "type" TEXT NOT NULL,
+    "title" TEXT NOT NULL,
+    "message" TEXT,
+    "category" TEXT NOT NULL DEFAULT 'general',
+    "read" BOOLEAN NOT NULL DEFAULT false,
+    "referenceId" TEXT,
+    "link" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "AppNotification_pkey" PRIMARY KEY ("id")
+);
+
 -- CreateIndex
 CREATE UNIQUE INDEX "Company_baseCurrencyId_key" ON "Company"("baseCurrencyId");
 
@@ -1733,6 +1760,9 @@ CREATE INDEX "PayrollLeaveItem_payrollRunItemId_idx" ON "PayrollLeaveItem"("payr
 CREATE UNIQUE INDEX "PayrollLeaveItem_payrollRunItemId_leaveType_key" ON "PayrollLeaveItem"("payrollRunItemId", "leaveType");
 
 -- CreateIndex
+CREATE UNIQUE INDEX "ApprovalStep_approvalWorkflowId_stageType_stepOrder_key" ON "ApprovalStep"("approvalWorkflowId", "stageType", "stepOrder");
+
+-- CreateIndex
 CREATE INDEX "PayrollNotification_recipientId_read_idx" ON "PayrollNotification"("recipientId", "read");
 
 -- CreateIndex
@@ -1770,6 +1800,12 @@ CREATE INDEX "PayrollBatchEmployee_payrollPeriodId_idx" ON "PayrollBatchEmployee
 
 -- CreateIndex
 CREATE UNIQUE INDEX "PayrollBatchEmployee_employeeId_payrollPeriodId_key" ON "PayrollBatchEmployee"("employeeId", "payrollPeriodId");
+
+-- CreateIndex
+CREATE INDEX "AppNotification_recipientId_read_idx" ON "AppNotification"("recipientId", "read");
+
+-- CreateIndex
+CREATE INDEX "AppNotification_recipientId_createdAt_idx" ON "AppNotification"("recipientId", "createdAt");
 
 -- AddForeignKey
 ALTER TABLE "Company" ADD CONSTRAINT "Company_baseCurrencyId_fkey" FOREIGN KEY ("baseCurrencyId") REFERENCES "SystemCurrency"("id") ON DELETE SET NULL ON UPDATE CASCADE;
